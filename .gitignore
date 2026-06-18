@@ -1,0 +1,35 @@
+.env
+
+FraudAI/venv/
+FraudAI/.venv/
+venv/
+.venv/
+**/venv/
+**/.venv/
+
+FraudDashboard/node_modules/
+node_modules/
+
+*.pt
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+**/bin/
+**/obj/
+.vs/
+.vscode/
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# VS Code temporary runner file
+tempCodeRunnerFile.py
+
+# Local development config with secrets
+FraudAPI/appsettings.Development.json

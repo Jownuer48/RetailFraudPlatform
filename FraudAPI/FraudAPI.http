@@ -1,0 +1,6 @@
+@FraudAPI_HostAddress = http://localhost:5233
+
+GET {{FraudAPI_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
