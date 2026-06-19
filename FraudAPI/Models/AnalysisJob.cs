@@ -10,6 +10,9 @@ public class AnalysisJob
     [MaxLength(100)]
     public string TransactionId { get; set; } = string.Empty;
 
+    [MaxLength(100)]
+    public string? CameraId { get; set; }
+
     [Required]
     [MaxLength(1000)]
     public string VideoPath { get; set; } = string.Empty;

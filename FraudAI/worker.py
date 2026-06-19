@@ -2,6 +2,7 @@ import json
 import os
 import time
 from pathlib import Path
+from typing import Optional, Any
 
 import cv2
 import numpy as np
@@ -49,6 +50,12 @@ if os.path.isabs(MODEL_PATH_ENV):
 else:
     MODEL_PATH = str(BASE_DIR / MODEL_PATH_ENV)
 
+# ใช้กัน RTSP หรือวิดีโอยาวมากไม่ให้ worker รันไม่จบ
+MAX_ANALYSIS_SECONDS = int(os.getenv("MAX_ANALYSIS_SECONDS", "30"))
+
+# ข้ามเฟรมได้ถ้าอยากให้เร็วขึ้น เช่น 1 = วิเคราะห์ทุกเฟรม, 2 = ข้าม 1 เฟรม
+FRAME_STRIDE = int(os.getenv("FRAME_STRIDE", "1"))
+
 
 # ============================================================
 # 2. Load AI Model
@@ -63,45 +70,157 @@ print("โหลดโมเดลสำเร็จ")
 
 
 # ============================================================
-# 3. Video Processing Logic
+# 3. Camera Config / Source Resolver
 # ============================================================
 
-def process_video(transaction_id: str, video_path: str) -> dict:
+def get_camera_config(camera_id: str) -> dict:
+    url = f"{BACKEND_BASE_URL}/api/Cameras/{camera_id}"
+
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+
+    return response.json()
+
+
+def parse_roi_config(roi_config_json: Optional[str]) -> Optional[list[list[int]]]:
+    if not roi_config_json:
+        return None
+
+    try:
+        roi_polygon = json.loads(roi_config_json)
+
+        if not isinstance(roi_polygon, list) or len(roi_polygon) < 3:
+            raise ValueError("ROI polygon must contain at least 3 points")
+
+        return roi_polygon
+
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Invalid roiConfigJson: {error}") from error
+
+
+def resolve_video_source(
+    camera_id: Optional[str],
+    fallback_video_path: Optional[str]
+) -> tuple[str, str, Optional[list[list[int]]], Optional[dict[str, Any]]]:
+    """
+    คืนค่า:
+    - video_source: path หรือ rtsp url
+    - source_type: FILE / RTSP
+    - roi_polygon: polygon จาก camera config
+    - camera: raw camera config
+    """
+
+    if camera_id:
+        camera = get_camera_config(camera_id)
+
+        source_type = str(camera.get("sourceType", "FILE")).upper()
+        source_url = camera.get("sourceUrl")
+        roi_config_json = camera.get("roiConfigJson")
+
+        if not source_url:
+            raise ValueError(f"Camera {camera_id} has no sourceUrl")
+
+        roi_polygon = parse_roi_config(roi_config_json)
+
+        if source_type == "FILE":
+            source_path = Path(source_url)
+
+            if not source_path.is_absolute():
+                source_path = BASE_DIR / source_path
+
+            return str(source_path), source_type, roi_polygon, camera
+
+        if source_type == "RTSP":
+            return str(source_url), source_type, roi_polygon, camera
+
+        raise ValueError(f"Unsupported camera source type: {source_type}")
+
+    if fallback_video_path:
+        return fallback_video_path, "FILE", None, None
+
+    raise ValueError("cameraId or videoPath is required")
+
+
+# ============================================================
+# 4. Video Processing Logic
+# ============================================================
+
+def build_polygon(roi_polygon: Optional[list[list[int]]]) -> np.ndarray:
+    if roi_polygon:
+        return np.array(roi_polygon, dtype=np.int32)
+
+    return np.array(
+        [
+            [150, 150],
+            [490, 150],
+            [490, 480],
+            [150, 480],
+        ],
+        dtype=np.int32
+    )
+
+
+def open_video_capture(video_source: str, source_type: str) -> cv2.VideoCapture:
+    source_type = source_type.upper()
+
+    if source_type == "FILE":
+        video_file = Path(video_source)
+
+        if not video_file.exists():
+            raise FileNotFoundError(f"ไม่พบไฟล์วิดีโอ: {video_source}")
+
+        return cv2.VideoCapture(str(video_file))
+
+    if source_type == "RTSP":
+        return cv2.VideoCapture(video_source)
+
+    raise ValueError(f"Unsupported video source type: {source_type}")
+
+
+def process_video(
+    transaction_id: str,
+    video_source: str,
+    source_type: str = "FILE",
+    roi_polygon: Optional[list[list[int]]] = None
+) -> dict:
     """
     วิเคราะห์วิดีโอ:
+    - FILE: ใช้ไฟล์ demo หรือไฟล์จาก NVR export
+    - RTSP: อ่านจากกล้อง/NVR stream
     - ตรวจจับคนด้วย YOLO
-    - เช็คว่าคนอยู่ใน ROI หน้าเคาน์เตอร์หรือไม่
+    - เช็คว่าคนอยู่ใน ROI หรือไม่
     - คำนวณ presence time
     - สรุป risk level
     """
 
-    video_file = Path(video_path)
+    source_type = source_type.upper()
 
-    if not video_file.exists():
-        raise FileNotFoundError(f"ไม่พบไฟล์วิดีโอ: {video_path}")
-
-    cap = cv2.VideoCapture(str(video_file))
+    cap = open_video_capture(video_source, source_type)
 
     if not cap.isOpened():
-        raise RuntimeError(f"เปิดวิดีโอไม่ได้: {video_path}")
+        raise RuntimeError(f"เปิดวิดีโอไม่ได้: {video_source}")
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps is None or fps <= 0:
         fps = 30
 
-    # ROI หน้าเคาน์เตอร์
-    # Production phase ควรย้ายไป config/database
-    polygon = np.array([
-        [150, 150],
-        [490, 150],
-        [490, 480],
-        [150, 480]
-    ])
-
+    polygon = build_polygon(roi_polygon)
     zone = sv.PolygonZone(polygon=polygon)
 
     frames_in_zone = 0
     total_frames = 0
+    analyzed_frames = 0
+
+    max_frames = None
+    if MAX_ANALYSIS_SECONDS > 0:
+        max_frames = int(fps * MAX_ANALYSIS_SECONDS)
+
+    print(f"เริ่มวิเคราะห์ Transaction: {transaction_id}")
+    print(f"Source type: {source_type}")
+    print(f"Source: {video_source}")
+    print(f"FPS: {fps}")
+    print(f"Max analysis seconds: {MAX_ANALYSIS_SECONDS}")
+    print(f"ROI: {polygon.tolist()}")
 
     try:
         while cap.isOpened():
@@ -111,6 +230,15 @@ def process_video(transaction_id: str, video_path: str) -> dict:
                 break
 
             total_frames += 1
+
+            if max_frames is not None and total_frames > max_frames:
+                print("ถึงเวลาวิเคราะห์สูงสุดแล้ว หยุดอ่านวิดีโอ")
+                break
+
+            if FRAME_STRIDE > 1 and total_frames % FRAME_STRIDE != 0:
+                continue
+
+            analyzed_frames += 1
 
             results = model.track(
                 frame,
@@ -128,10 +256,22 @@ def process_video(transaction_id: str, video_path: str) -> dict:
                 if in_zone.any():
                     frames_in_zone += 1
 
+            if analyzed_frames % 100 == 0:
+                print(
+                    f"Progress: total_frames={total_frames}, "
+                    f"analyzed_frames={analyzed_frames}, "
+                    f"frames_in_zone={frames_in_zone}"
+                )
+
     finally:
         cap.release()
 
-    time_in_zone_sec = frames_in_zone / fps
+    if total_frames <= 0:
+        raise RuntimeError(f"ไม่พบ frame ในวิดีโอหรือ stream: {video_source}")
+
+    effective_fps = fps / FRAME_STRIDE if FRAME_STRIDE > 1 else fps
+
+    time_in_zone_sec = frames_in_zone / effective_fps
     total_video_sec = total_frames / fps
 
     is_fraud = time_in_zone_sec < 5.0
@@ -152,7 +292,7 @@ def process_video(transaction_id: str, video_path: str) -> dict:
 
 
 # ============================================================
-# 4. Backend Job Status Update
+# 5. Backend Job Status Update
 # ============================================================
 
 def mark_job_processing(job_id: str):
@@ -187,7 +327,7 @@ def mark_job_failed(job_id: str, error_message: str):
 
 
 # ============================================================
-# 5. RabbitMQ Connection
+# 6. RabbitMQ Connection
 # ============================================================
 
 def create_rabbitmq_connection() -> pika.BlockingConnection:
@@ -224,7 +364,7 @@ def create_rabbitmq_connection() -> pika.BlockingConnection:
 
 
 # ============================================================
-# 6. Message Callback
+# 7. Message Callback
 # ============================================================
 
 def callback(ch, method, properties, body):
@@ -232,15 +372,16 @@ def callback(ch, method, properties, body):
     ทำงานเมื่อมี job ใหม่เข้า fraud_queue
 
     Manual ACK strategy:
-    - ถ้าวิเคราะห์สำเร็จ และ POST กลับ Backend สำเร็จ -> ACK
-    - ถ้า Backend ล่มชั่วคราว -> NACK + requeue
-    - ถ้า video path ผิด -> Mark FAILED + Reject ไม่ requeue
+    - วิเคราะห์สำเร็จ + POST กลับ Backend สำเร็จ -> ACK
+    - Backend webhook ล่มชั่วคราว -> NACK + requeue
+    - video/camera/source ผิด -> Mark FAILED + Reject ไม่ requeue
     """
 
     delivery_tag = method.delivery_tag
 
     job_id = None
     transaction_id = None
+    camera_id = None
     video_path = None
 
     try:
@@ -249,19 +390,21 @@ def callback(ch, method, properties, body):
 
         job_id = data.get("jobId")
         transaction_id = data.get("transactionId")
+        camera_id = data.get("cameraId")
         video_path = data.get("videoPath")
 
         if not transaction_id:
             raise ValueError("transactionId is required")
 
-        if not video_path:
-            raise ValueError("videoPath is required")
+        if not camera_id and not video_path:
+            raise ValueError("cameraId or videoPath is required")
 
         print("\n========================================")
         print("ได้รับงานใหม่จาก RabbitMQ")
         print(f"JobId: {job_id}")
         print(f"Transaction: {transaction_id}")
-        print(f"Video path: {video_path}")
+        print(f"CameraId: {camera_id}")
+        print(f"Video path fallback: {video_path}")
         print("========================================")
 
         if job_id:
@@ -269,7 +412,28 @@ def callback(ch, method, properties, body):
         else:
             print("คำเตือน: message นี้ไม่มี jobId ระบบจะบันทึก FraudRecord ได้ แต่ update job status ไม่ได้")
 
-        result_data = process_video(transaction_id, video_path)
+        video_source, source_type, roi_polygon, camera = resolve_video_source(
+            camera_id=camera_id,
+            fallback_video_path=video_path
+        )
+
+        if camera:
+            print(
+                f"Camera resolved: "
+                f"{camera.get('id')} / "
+                f"{camera.get('storeId')} / "
+                f"{camera.get('cameraName')}"
+            )
+
+        print(f"Resolved source type: {source_type}")
+        print(f"Resolved source: {video_source}")
+
+        result_data = process_video(
+            transaction_id=transaction_id,
+            video_source=video_source,
+            source_type=source_type,
+            roi_polygon=roi_polygon
+        )
 
         if job_id:
             result_data["jobId"] = job_id
@@ -295,6 +459,38 @@ def callback(ch, method, properties, body):
 
         print(f"ACK งานสำเร็จ Transaction: {transaction_id}")
 
+    except requests.RequestException as error:
+        print(f"เกิดปัญหาการเชื่อมต่อ HTTP: {error}")
+
+        # ถ้าเป็นปัญหาตอนส่งผลกลับ backend ให้ requeue ได้
+        # แต่ถ้าเป็นปัญหากล้อง config 404 จาก /api/Cameras ก็ควร FAILED
+        try:
+            status_code = getattr(error.response, "status_code", None)
+
+            if status_code == 404:
+                if job_id:
+                    mark_job_failed(job_id, f"Camera config not found or endpoint returned 404: {error}")
+
+                ch.basic_reject(
+                    delivery_tag=delivery_tag,
+                    requeue=False
+                )
+            else:
+                print("NACK และ requeue งานนี้ เพราะ Backend อาจล่มชั่วคราว")
+
+                ch.basic_nack(
+                    delivery_tag=delivery_tag,
+                    requeue=True
+                )
+
+        except Exception as notify_error:
+            print(f"จัดการ HTTP error ไม่สำเร็จ: {notify_error}")
+
+            ch.basic_nack(
+                delivery_tag=delivery_tag,
+                requeue=True
+            )
+
     except FileNotFoundError as error:
         print(f"ไฟล์วิดีโอไม่ถูกต้อง: {error}")
 
@@ -309,15 +505,6 @@ def callback(ch, method, properties, body):
         ch.basic_reject(
             delivery_tag=delivery_tag,
             requeue=False
-        )
-
-    except requests.RequestException as error:
-        print(f"ส่งผลกลับ Backend ไม่สำเร็จ: {error}")
-        print("NACK และ requeue งานนี้ เพราะ Backend อาจล่มชั่วคราว")
-
-        ch.basic_nack(
-            delivery_tag=delivery_tag,
-            requeue=True
         )
 
     except Exception as error:
@@ -338,7 +525,7 @@ def callback(ch, method, properties, body):
 
 
 # ============================================================
-# 7. Worker Main
+# 8. Worker Main
 # ============================================================
 
 def main():
@@ -350,8 +537,6 @@ def main():
         durable=True
     )
 
-    # ให้ worker รับทีละ 1 งานก่อน
-    # ป้องกันเครื่องทำ AI หลายวิดีโอพร้อมกันจน RAM/CPU เต็ม
     channel.basic_qos(prefetch_count=1)
 
     channel.basic_consume(

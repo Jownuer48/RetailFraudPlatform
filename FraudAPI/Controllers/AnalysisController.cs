@@ -26,91 +26,120 @@ public class AnalysisController : ControllerBase
     }
 
     [HttpPost("trigger")]
-    public async Task<IActionResult> TriggerAnalysis([FromBody] TriggerAnalysisRequest request)
+public async Task<IActionResult> TriggerAnalysis([FromBody] TriggerAnalysisRequest request)
+{
+    if (string.IsNullOrWhiteSpace(request.TransactionId))
     {
-        if (string.IsNullOrWhiteSpace(request.TransactionId))
+        return BadRequest(new
+        {
+            message = "transactionId is required"
+        });
+    }
+
+    if (string.IsNullOrWhiteSpace(request.CameraId) &&
+        string.IsNullOrWhiteSpace(request.VideoPath))
+    {
+        return BadRequest(new
+        {
+            message = "cameraId or videoPath is required"
+        });
+    }
+
+    string resolvedVideoPath;
+    string? cameraId = null;
+
+    if (!string.IsNullOrWhiteSpace(request.CameraId))
+    {
+        var camera = await _context.Cameras
+            .FirstOrDefaultAsync(x => x.Id == request.CameraId && x.IsActive);
+
+        if (camera is null)
         {
             return BadRequest(new
             {
-                message = "transactionId is required"
+                message = "Camera not found or inactive",
+                cameraId = request.CameraId
             });
         }
 
-        if (string.IsNullOrWhiteSpace(request.VideoPath))
+        cameraId = camera.Id;
+        resolvedVideoPath = camera.SourceUrl;
+    }
+    else
+    {
+        resolvedVideoPath = request.VideoPath!;
+    }
+
+    var existingJob = await _context.AnalysisJobs
+        .OrderByDescending(x => x.CreatedAtUtc)
+        .FirstOrDefaultAsync(x => x.TransactionId == request.TransactionId);
+
+    if (existingJob is not null &&
+        existingJob.Status is AnalysisJobStatus.Queued or AnalysisJobStatus.Processing)
+    {
+        return Ok(new
         {
-            return BadRequest(new
-            {
-                message = "videoPath is required"
-            });
-        }
+            message = "Job already exists",
+            jobId = existingJob.Id,
+            status = existingJob.Status,
+            transactionId = existingJob.TransactionId
+        });
+    }
 
-        var existingJob = await _context.AnalysisJobs
-            .OrderByDescending(x => x.CreatedAtUtc)
-            .FirstOrDefaultAsync(x => x.TransactionId == request.TransactionId);
+    var job = new AnalysisJob
+    {
+        Id = Guid.NewGuid(),
+        TransactionId = request.TransactionId,
+        CameraId = cameraId,
+        VideoPath = resolvedVideoPath,
+        Status = AnalysisJobStatus.Queued,
+        CreatedAtUtc = DateTime.UtcNow,
+        UpdatedAtUtc = DateTime.UtcNow
+    };
 
-        if (existingJob is not null &&
-            existingJob.Status is AnalysisJobStatus.Queued or AnalysisJobStatus.Processing)
+    _context.AnalysisJobs.Add(job);
+    await _context.SaveChangesAsync();
+
+    try
+    {
+        var message = new AnalysisJobMessage(
+            JobId: job.Id,
+            TransactionId: job.TransactionId,
+            CameraId: job.CameraId,
+            VideoPath: job.VideoPath,
+            CreatedAtUtc: job.CreatedAtUtc
+        );
+
+        _rabbitMQService.PublishAnalysisJob(message);
+
+        return Accepted(new
         {
-            return Ok(new
-            {
-                message = "Job already exists",
-                jobId = existingJob.Id,
-                status = existingJob.Status,
-                transactionId = existingJob.TransactionId
-            });
-        }
+            message = "Job enqueued",
+            jobId = job.Id,
+            status = job.Status,
+            transactionId = job.TransactionId,
+            cameraId = job.CameraId
+        });
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Failed to publish job to RabbitMQ. JobId={JobId}", job.Id);
 
-        var job = new AnalysisJob
-        {
-            Id = Guid.NewGuid(),
-            TransactionId = request.TransactionId,
-            VideoPath = request.VideoPath,
-            Status = AnalysisJobStatus.Queued,
-            CreatedAtUtc = DateTime.UtcNow,
-            UpdatedAtUtc = DateTime.UtcNow
-        };
+        job.Status = AnalysisJobStatus.Failed;
+        job.ErrorMessage = "Failed to publish job to RabbitMQ: " + ex.Message;
+        job.FinishedAtUtc = DateTime.UtcNow;
+        job.UpdatedAtUtc = DateTime.UtcNow;
 
-        _context.AnalysisJobs.Add(job);
         await _context.SaveChangesAsync();
 
-        try
+        return StatusCode(503, new
         {
-            var message = new AnalysisJobMessage(
-                JobId: job.Id,
-                TransactionId: job.TransactionId,
-                VideoPath: job.VideoPath,
-                CreatedAtUtc: job.CreatedAtUtc
-            );
-
-            _rabbitMQService.PublishAnalysisJob(message);
-
-            return Accepted(new
-            {
-                message = "Job enqueued",
-                jobId = job.Id,
-                status = job.Status,
-                transactionId = job.TransactionId
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to publish job to RabbitMQ. JobId={JobId}", job.Id);
-
-            job.Status = AnalysisJobStatus.Failed;
-            job.ErrorMessage = "Failed to publish job to RabbitMQ: " + ex.Message;
-            job.FinishedAtUtc = DateTime.UtcNow;
-            job.UpdatedAtUtc = DateTime.UtcNow;
-
-            await _context.SaveChangesAsync();
-
-            return StatusCode(503, new
-            {
-                message = "Failed to enqueue job",
-                jobId = job.Id,
-                error = ex.Message
-            });
-        }
+            message = "Failed to enqueue job",
+            jobId = job.Id,
+            error = ex.Message
+        });
     }
+}
 
     [HttpPost("jobs/{jobId:guid}/processing")]
     public async Task<IActionResult> MarkJobAsProcessing(Guid jobId)
