@@ -32,12 +32,22 @@ RABBITMQ_USER = os.getenv("RABBITMQ_USER", "fraud_user")
 RABBITMQ_PASS = os.getenv("RABBITMQ_PASS", "fraud_pass_2026")
 RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "fraud_queue")
 
-BACKEND_WEBHOOK_URL = os.getenv(
-    "BACKEND_WEBHOOK_URL",
-    "http://localhost:5233/api/Analysis/result"
+BACKEND_BASE_URL = os.getenv(
+    "BACKEND_BASE_URL",
+    "http://localhost:5233"
 )
 
-MODEL_PATH = os.getenv("YOLO_MODEL_PATH", str(BASE_DIR / "yolov8n.pt"))
+BACKEND_WEBHOOK_URL = os.getenv(
+    "BACKEND_WEBHOOK_URL",
+    f"{BACKEND_BASE_URL}/api/Analysis/result"
+)
+
+MODEL_PATH_ENV = os.getenv("YOLO_MODEL_PATH", "yolov8n.pt")
+
+if os.path.isabs(MODEL_PATH_ENV):
+    MODEL_PATH = MODEL_PATH_ENV
+else:
+    MODEL_PATH = str(BASE_DIR / MODEL_PATH_ENV)
 
 
 # ============================================================
@@ -59,7 +69,7 @@ print("โหลดโมเดลสำเร็จ")
 def process_video(transaction_id: str, video_path: str) -> dict:
     """
     วิเคราะห์วิดีโอ:
-    - ตรวจจับคนด้วย YOLOv8
+    - ตรวจจับคนด้วย YOLO
     - เช็คว่าคนอยู่ใน ROI หน้าเคาน์เตอร์หรือไม่
     - คำนวณ presence time
     - สรุป risk level
@@ -80,7 +90,7 @@ def process_video(transaction_id: str, video_path: str) -> dict:
         fps = 30
 
     # ROI หน้าเคาน์เตอร์
-    # ตอนนี้ fix ไว้ก่อน เดี๋ยว production phase ควรย้ายไป config/database
+    # Production phase ควรย้ายไป config/database
     polygon = np.array([
         [150, 150],
         [490, 150],
@@ -142,7 +152,42 @@ def process_video(transaction_id: str, video_path: str) -> dict:
 
 
 # ============================================================
-# 4. RabbitMQ Connection
+# 4. Backend Job Status Update
+# ============================================================
+
+def mark_job_processing(job_id: str):
+    if not job_id:
+        return
+
+    url = f"{BACKEND_BASE_URL}/api/Analysis/jobs/{job_id}/processing"
+
+    response = requests.post(url, timeout=10)
+    response.raise_for_status()
+
+    print(f"อัปเดต Job เป็น PROCESSING สำเร็จ: {job_id}")
+
+
+def mark_job_failed(job_id: str, error_message: str):
+    if not job_id:
+        return
+
+    url = f"{BACKEND_BASE_URL}/api/Analysis/jobs/{job_id}/failed"
+
+    response = requests.post(
+        url,
+        json={
+            "errorMessage": error_message
+        },
+        timeout=10
+    )
+
+    response.raise_for_status()
+
+    print(f"อัปเดต Job เป็น FAILED สำเร็จ: {job_id}")
+
+
+# ============================================================
+# 5. RabbitMQ Connection
 # ============================================================
 
 def create_rabbitmq_connection() -> pika.BlockingConnection:
@@ -179,7 +224,7 @@ def create_rabbitmq_connection() -> pika.BlockingConnection:
 
 
 # ============================================================
-# 5. Message Callback
+# 6. Message Callback
 # ============================================================
 
 def callback(ch, method, properties, body):
@@ -187,16 +232,22 @@ def callback(ch, method, properties, body):
     ทำงานเมื่อมี job ใหม่เข้า fraud_queue
 
     Manual ACK strategy:
-    - ถ้า AI วิเคราะห์สำเร็จ และ POST กลับ Backend สำเร็จ -> ACK
+    - ถ้าวิเคราะห์สำเร็จ และ POST กลับ Backend สำเร็จ -> ACK
     - ถ้า Backend ล่มชั่วคราว -> NACK + requeue
-    - ถ้า video path ผิด -> Reject ไม่ requeue
+    - ถ้า video path ผิด -> Mark FAILED + Reject ไม่ requeue
     """
 
     delivery_tag = method.delivery_tag
 
-    try:
-        data = json.loads(body.decode("utf-8"))
+    job_id = None
+    transaction_id = None
+    video_path = None
 
+    try:
+        raw_message = body.decode("utf-8")
+        data = json.loads(raw_message)
+
+        job_id = data.get("jobId")
         transaction_id = data.get("transactionId")
         video_path = data.get("videoPath")
 
@@ -207,16 +258,27 @@ def callback(ch, method, properties, body):
             raise ValueError("videoPath is required")
 
         print("\n========================================")
-        print(f"ได้รับงานใหม่ Transaction: {transaction_id}")
+        print("ได้รับงานใหม่จาก RabbitMQ")
+        print(f"JobId: {job_id}")
+        print(f"Transaction: {transaction_id}")
         print(f"Video path: {video_path}")
         print("========================================")
 
+        if job_id:
+            mark_job_processing(job_id)
+        else:
+            print("คำเตือน: message นี้ไม่มี jobId ระบบจะบันทึก FraudRecord ได้ แต่ update job status ไม่ได้")
+
         result_data = process_video(transaction_id, video_path)
+
+        if job_id:
+            result_data["jobId"] = job_id
 
         print(
             f"AI วิเคราะห์เสร็จ: "
             f"Risk={result_data['riskLevel']}, "
-            f"Score={result_data['fraudScore']}"
+            f"Score={result_data['fraudScore']}, "
+            f"Presence={result_data['presenceTimeSec']}s"
         )
 
         response = requests.post(
@@ -231,10 +293,17 @@ def callback(ch, method, properties, body):
 
         ch.basic_ack(delivery_tag=delivery_tag)
 
-        print(f"ACK งาน Transaction: {transaction_id}")
+        print(f"ACK งานสำเร็จ Transaction: {transaction_id}")
 
     except FileNotFoundError as error:
         print(f"ไฟล์วิดีโอไม่ถูกต้อง: {error}")
+
+        try:
+            if job_id:
+                mark_job_failed(job_id, str(error))
+        except Exception as notify_error:
+            print(f"แจ้ง Backend ว่า FAILED ไม่สำเร็จ: {notify_error}")
+
         print("Reject งานนี้แบบไม่ requeue เพื่อกัน loop ไม่จบ")
 
         ch.basic_reject(
@@ -253,6 +322,13 @@ def callback(ch, method, properties, body):
 
     except Exception as error:
         print(f"เกิดข้อผิดพลาดระหว่างประมวลผลงาน: {error}")
+
+        try:
+            if job_id:
+                mark_job_failed(job_id, str(error))
+        except Exception as notify_error:
+            print(f"แจ้ง Backend ว่า FAILED ไม่สำเร็จ: {notify_error}")
+
         print("Reject งานนี้แบบไม่ requeue ชั่วคราว จนกว่าจะมี Dead Letter Queue")
 
         ch.basic_reject(
@@ -262,7 +338,7 @@ def callback(ch, method, properties, body):
 
 
 # ============================================================
-# 6. Worker Main
+# 7. Worker Main
 # ============================================================
 
 def main():
@@ -287,6 +363,7 @@ def main():
     print("\nAI Worker พร้อมทำงาน")
     print(f"RabbitMQ: {RABBITMQ_HOST}:{RABBITMQ_PORT}")
     print(f"Queue: {RABBITMQ_QUEUE}")
+    print(f"Backend base URL: {BACKEND_BASE_URL}")
     print(f"Backend webhook: {BACKEND_WEBHOOK_URL}")
     print("กด Ctrl+C เพื่อหยุด\n")
 

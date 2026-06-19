@@ -4,40 +4,45 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// --- 1. ตั้งค่า Database ต้องอยู่ "ก่อน" builder.Build() ---
+// --- 1. Database ---
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// --- 2. ลงทะเบียน Service ต่างๆ ---
+// --- 2. Services ---
 builder.Services.AddHttpClient<AiAnalysisService>();
+
+// สำคัญ: Register RabbitMQService เพื่อให้ Controller เรียกใช้งานได้
+builder.Services.AddSingleton<RabbitMQService>();
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// เพิ่มชุดนี้เข้าไป
+// --- 3. CORS ---
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll",
-        builder => builder.AllowAnyOrigin()
-                          .AllowAnyMethod()
-                          .AllowAnyHeader());
+        policy => policy.AllowAnyOrigin()
+                        .AllowAnyMethod()
+                        .AllowAnyHeader());
 });
 
 // ==========================================
-// ห้ามเอา builder.Services... มาวางใต้บรรทัดนี้เด็ดขาด!
+// ห้ามเอา builder.Services... มาวางใต้บรรทัดนี้เด็ดขาด
 var app = builder.Build();
 // ==========================================
 
-// --- 3. ตั้งค่าการทำงานของแอป ---
+// --- 4. Middleware ---
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-app.UseCors("AllowAll"); 
+app.UseCors("AllowAll");
 
 app.UseHttpsRedirection();
-app.MapControllers(); 
+
+app.MapControllers();
 
 app.Run();

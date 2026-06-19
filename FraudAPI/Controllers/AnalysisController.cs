@@ -1,122 +1,262 @@
 using FraudAPI.Data;
+using FraudAPI.DTOs;
+using FraudAPI.Models;
+using FraudAPI.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration; // <-- เพิ่มตัวนี้เพื่อให้อ่านไฟล์ JSON ได้
-using System;
-using System.Threading.Tasks;
 
-using FraudAPI.Models;     // เพื่อให้มันรู้จัก FraudRecord
-using FraudAPI.Services;   // เพื่อให้มันรู้จัก RabbitMQService
+namespace FraudAPI.Controllers;
 
-namespace FraudAPI.Controllers
+[ApiController]
+[Route("api/[controller]")]
+public class AnalysisController : ControllerBase
 {
-    [ApiController]
-    [Route("api/[controller]")]
-    public class AnalysisController : ControllerBase
+    private readonly AppDbContext _context;
+    private readonly RabbitMQService _rabbitMQService;
+    private readonly ILogger<AnalysisController> _logger;
+
+    public AnalysisController(
+        AppDbContext context,
+        RabbitMQService rabbitMQService,
+        ILogger<AnalysisController> logger)
     {
-        private readonly AppDbContext _context;
-        private readonly IConfiguration _config; // <-- เพิ่มตัวแปรนี้สำหรับเก็บ Config
+        _context = context;
+        _rabbitMQService = rabbitMQService;
+        _logger = logger;
+    }
 
-        // ถอด AiAnalysisService ออก แล้วใช้แค่ AppDbContext สำหรับจัดการ Database
-        // เพิ่ม IConfiguration เข้ามาใน Constructor
-        public AnalysisController(AppDbContext context, IConfiguration config)
+    [HttpPost("trigger")]
+    public async Task<IActionResult> TriggerAnalysis([FromBody] TriggerAnalysisRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.TransactionId))
         {
-            _context = context;
-            _config = config;
-        }
-
-        // Data Transfer Object (DTO) สำหรับรับข้อมูลขาเข้าจาก React
-        public class AnalyzeRequestDto
-        {
-            public string TransactionId { get; set; } = string.Empty;
-            public string VideoPath { get; set; } = string.Empty;
-        }
-
-        [HttpPost("trigger")]
-        public IActionResult TriggerAnalysis([FromBody] AnalyzeRequestDto request)
-        {
-            // 1. Validation ตรวจสอบข้อมูลเบื้องต้น
-            if (string.IsNullOrEmpty(request.TransactionId) || string.IsNullOrEmpty(request.VideoPath))
+            return BadRequest(new
             {
-                return BadRequest(new { Message = "กรุณาระบุ TransactionId และ VideoPath ให้ครบถ้วน" });
-            }
-
-            Console.WriteLine($"\n[Backend] 📥 ได้รับคำสั่งตรวจจับสำหรับ Transaction: {request.TransactionId}");
-
-            // 2. โยนงานเข้าคิว RabbitMQ ให้ Worker ไปจัดการต่อเบื้องหลัง
-            try
-            {
-                // 👇 โยน _config เข้าไปให้ RabbitMQService อ่านค่ารหัสผ่านจาก appsettings.json
-                var rabbit = new RabbitMQService(_config);
-                rabbit.SendMessage(request.TransactionId, request.VideoPath);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { Message = "ไม่สามารถเชื่อมต่อระบบคิว (RabbitMQ) ได้", Error = ex.Message });
-            }
-
-            // 3. ตอบกลับหน้าเว็บทันทีว่ารับเรื่องแล้ว (ไม่ต้องรอ AI วิเคราะห์เสร็จ)
-            return Ok(new 
-            { 
-                status = "Job Enqueued",
-                message = "ฝากงานเข้าคิวให้ AI เรียบร้อยแล้ว ระบบกำลังประมวลผลอยู่เบื้องหลัง!" 
+                message = "transactionId is required"
             });
         }
 
-        // -----------------------------------------------------------------
-        // [จุดเชื่อมต่อใหม่] Endpoint สำหรับให้ Python ส่งผลลัพธ์กลับมาเซฟลง Database
-        // -----------------------------------------------------------------
-        [HttpPost("result")]
-        public async Task<IActionResult> ReceiveAiResult([FromBody] AiResultPayload result)
+        if (string.IsNullOrWhiteSpace(request.VideoPath))
         {
-            Console.WriteLine($"\n[C#] 🎉 ได้รับผลลัพธ์จาก AI สำหรับ: {result.TransactionId}");
-            Console.WriteLine($"Risk Level: {result.RiskLevel} | Score: {result.FraudScore}");
-
-            // 1. สร้าง Record ใหม่เตรียมบันทึกลงฐานข้อมูล
-            var newRecord = new FraudRecord
+            return BadRequest(new
             {
-                TransactionId = result.TransactionId,
-                RiskLevel = result.RiskLevel,
-                FraudScore = result.FraudScore,
-                Reason = result.Reason,
-                AnalyzedAt = DateTime.UtcNow // แสตมป์เวลาปัจจุบัน
-            };
-
-            // 2. บันทึกลง Database
-            try
-            {
-                _context.FraudRecords.Add(newRecord);
-                await _context.SaveChangesAsync();
-                Console.WriteLine($"[C#] 💾 บันทึกผลลัพธ์ลง Database เรียบร้อย!");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[C#] ❌ Error ตอนเซฟลง DB: {ex.Message}");
-                return StatusCode(500, new { Message = "AI ตรวจสำเร็จ แต่ไม่สามารถเซฟลง Database ได้", Error = ex.Message });
-            }
-            
-            return Ok(new { message = "Result received and saved to database successfully" });
+                message = "videoPath is required"
+            });
         }
 
-        // แถม Endpoint สำหรับให้ฝั่ง React ดึงข้อมูลทั้งหมดไปโชว์บนหน้าตาราง Dashboard
-        [HttpGet("history")]
-        public async Task<IActionResult> GetAnalysisHistory()
+        var existingJob = await _context.AnalysisJobs
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .FirstOrDefaultAsync(x => x.TransactionId == request.TransactionId);
+
+        if (existingJob is not null &&
+            existingJob.Status is AnalysisJobStatus.Queued or AnalysisJobStatus.Processing)
         {
-            var history = await _context.FraudRecords
-                .OrderByDescending(r => r.AnalyzedAt)
-                .ToListAsync();
-            return Ok(history);
+            return Ok(new
+            {
+                message = "Job already exists",
+                jobId = existingJob.Id,
+                status = existingJob.Status,
+                transactionId = existingJob.TransactionId
+            });
+        }
+
+        var job = new AnalysisJob
+        {
+            Id = Guid.NewGuid(),
+            TransactionId = request.TransactionId,
+            VideoPath = request.VideoPath,
+            Status = AnalysisJobStatus.Queued,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+
+        _context.AnalysisJobs.Add(job);
+        await _context.SaveChangesAsync();
+
+        try
+        {
+            var message = new AnalysisJobMessage(
+                JobId: job.Id,
+                TransactionId: job.TransactionId,
+                VideoPath: job.VideoPath,
+                CreatedAtUtc: job.CreatedAtUtc
+            );
+
+            _rabbitMQService.PublishAnalysisJob(message);
+
+            return Accepted(new
+            {
+                message = "Job enqueued",
+                jobId = job.Id,
+                status = job.Status,
+                transactionId = job.TransactionId
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to publish job to RabbitMQ. JobId={JobId}", job.Id);
+
+            job.Status = AnalysisJobStatus.Failed;
+            job.ErrorMessage = "Failed to publish job to RabbitMQ: " + ex.Message;
+            job.FinishedAtUtc = DateTime.UtcNow;
+            job.UpdatedAtUtc = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+
+            return StatusCode(503, new
+            {
+                message = "Failed to enqueue job",
+                jobId = job.Id,
+                error = ex.Message
+            });
         }
     }
 
-    // Class กล่องรับข้อมูลให้ตรงกับที่ Python ส่งมา
-    public class AiResultPayload
+    [HttpPost("jobs/{jobId:guid}/processing")]
+    public async Task<IActionResult> MarkJobAsProcessing(Guid jobId)
     {
-        public string TransactionId { get; set; } = string.Empty;
-        public string RiskLevel { get; set; } = string.Empty;
-        public int FraudScore { get; set; }
-        public double PresenceTimeSec { get; set; }
-        public double TotalVideoSec { get; set; }
-        public string Reason { get; set; } = string.Empty;
+        var job = await _context.AnalysisJobs.FindAsync(jobId);
+
+        if (job is null)
+        {
+            return NotFound(new
+            {
+                message = "Job not found",
+                jobId
+            });
+        }
+
+        job.Status = AnalysisJobStatus.Processing;
+        job.StartedAtUtc ??= DateTime.UtcNow;
+        job.UpdatedAtUtc = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Job marked as processing",
+            jobId = job.Id,
+            status = job.Status
+        });
+    }
+
+    [HttpPost("jobs/{jobId:guid}/failed")]
+    public async Task<IActionResult> MarkJobAsFailed(
+        Guid jobId,
+        [FromBody] JobFailedRequest request)
+    {
+        var job = await _context.AnalysisJobs.FindAsync(jobId);
+
+        if (job is null)
+        {
+            return NotFound(new
+            {
+                message = "Job not found",
+                jobId
+            });
+        }
+
+        job.Status = AnalysisJobStatus.Failed;
+        job.ErrorMessage = request.ErrorMessage;
+        job.FinishedAtUtc = DateTime.UtcNow;
+        job.UpdatedAtUtc = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Job marked as failed",
+            jobId = job.Id,
+            status = job.Status
+        });
+    }
+
+    [HttpPost("result")]
+    public async Task<IActionResult> ReceiveAnalysisResult([FromBody] AiAnalysisResultRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.TransactionId))
+        {
+            return BadRequest(new
+            {
+                message = "transactionId is required"
+            });
+        }
+
+        var record = new FraudRecord
+        {
+            TransactionId = request.TransactionId,
+            RiskLevel = request.RiskLevel,
+            FraudScore = request.FraudScore,
+            PresenceTimeSec = request.PresenceTimeSec,
+            TotalVideoSec = request.TotalVideoSec,
+            Reason = request.Reason,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.FraudRecords.Add(record);
+
+        AnalysisJob? job = null;
+
+        if (request.JobId.HasValue)
+        {
+            job = await _context.AnalysisJobs.FindAsync(request.JobId.Value);
+        }
+
+        if (job is not null)
+        {
+            job.Status = AnalysisJobStatus.Completed;
+            job.FinishedAtUtc = DateTime.UtcNow;
+            job.UpdatedAtUtc = DateTime.UtcNow;
+            job.ErrorMessage = null;
+        }
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Analysis result saved",
+            jobId = job?.Id,
+            transactionId = request.TransactionId,
+            riskLevel = request.RiskLevel,
+            fraudScore = request.FraudScore
+        });
+    }
+
+    [HttpGet("history")]
+    public async Task<IActionResult> GetHistory()
+    {
+        var records = await _context.FraudRecords
+            .OrderByDescending(x => x.CreatedAt)
+            .ToListAsync();
+
+        return Ok(records);
+    }
+
+    [HttpGet("jobs")]
+    public async Task<IActionResult> GetJobs()
+    {
+        var jobs = await _context.AnalysisJobs
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(100)
+            .ToListAsync();
+
+        return Ok(jobs);
+    }
+
+    [HttpGet("jobs/{jobId:guid}")]
+    public async Task<IActionResult> GetJobById(Guid jobId)
+    {
+        var job = await _context.AnalysisJobs.FindAsync(jobId);
+
+        if (job is null)
+        {
+            return NotFound(new
+            {
+                message = "Job not found",
+                jobId
+            });
+        }
+
+        return Ok(job);
     }
 }
