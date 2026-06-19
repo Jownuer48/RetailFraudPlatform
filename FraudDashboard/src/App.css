@@ -27,6 +27,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -182,6 +183,7 @@ label {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid rgba(148, 163, 184, 0.28);
@@ -193,6 +195,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: #38bdf8;
   box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.12);
@@ -412,4 +415,107 @@ td {
   .latest-result {
     grid-template-columns: 1fr;
   }
+}
+
+select {
+  appearance: none;
+}
+
+.camera-info-card {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 20px;
+  background: rgba(2, 6, 23, 0.55);
+  padding: 16px;
+}
+
+.camera-info-card div {
+  display: grid;
+  gap: 6px;
+}
+
+.camera-info-card span {
+  color: #94a3b8;
+  font-size: 0.82rem;
+}
+
+.camera-info-card strong {
+  color: #e5e7eb;
+}
+
+.camera-info-card p {
+  grid-column: 1 / -1;
+  margin: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  color: #94a3b8;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  padding-top: 14px;
+}
+
+.online {
+  color: #86efac !important;
+}
+
+.offline {
+  color: #fca5a5 !important;
+}
+
+@media (max-width: 640px) {
+  .camera-info-card {
+    grid-template-columns: 1fr;
+  }
+}
+
+.current-job-card {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-top: 16px;
+  border: 1px solid rgba(234, 179, 8, 0.22);
+  border-radius: 20px;
+  background: rgba(234, 179, 8, 0.08);
+  padding: 16px;
+}
+
+.current-job-card div {
+  display: grid;
+  gap: 6px;
+}
+
+.current-job-card span {
+  color: #94a3b8;
+  font-size: 0.82rem;
+}
+
+.current-job-card strong {
+  color: #e5e7eb;
+}
+
+.current-job-card p {
+  grid-column: 1 / -1;
+  margin: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  color: #fca5a5;
+  line-height: 1.6;
+  padding-top: 14px;
+}
+
+@media (max-width: 900px) {
+  .current-job-card {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .current-job-card {
+    grid-template-columns: 1fr;
+  }
+}
+
+.risk-badge.medium,
+.risk.medium {
+  color: #fde68a;
 }

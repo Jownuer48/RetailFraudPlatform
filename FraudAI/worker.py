@@ -176,6 +176,86 @@ def open_video_capture(video_source: str, source_type: str) -> cv2.VideoCapture:
 
     raise ValueError(f"Unsupported video source type: {source_type}")
 
+def map_risk_level(fraud_score: int) -> str:
+    if fraud_score >= 70:
+        return "HIGH"
+
+    if fraud_score >= 40:
+        return "MEDIUM"
+
+    return "LOW"
+
+
+def calculate_fraud_score(
+    presence_time_sec: float,
+    total_video_sec: float,
+    frames_in_zone: int,
+    analyzed_frames: int
+) -> tuple[int, str]:
+    """
+    Rule-based scoring engine v1
+
+    Score:
+    - 0-39   LOW
+    - 40-69  MEDIUM
+    - 70-100 HIGH
+    """
+
+    if total_video_sec <= 0 or analyzed_frames <= 0:
+        return 100, "Video could not be analyzed properly."
+
+    presence_ratio = presence_time_sec / total_video_sec
+
+    # Case 1: ไม่มีคนใน ROI เลย
+    if frames_in_zone <= 0:
+        return (
+            95,
+            "No customer presence detected in ROI during the transaction window."
+        )
+
+    # Case 2: อยู่สั้นมาก
+    if presence_time_sec < 3:
+        return (
+            88,
+            f"Customer presence was extremely short: {presence_time_sec:.2f}s."
+        )
+
+    # Case 3: อยู่ต่ำกว่า 5 วิ
+    if presence_time_sec < 5:
+        return (
+            76,
+            f"Customer presence was suspiciously low: {presence_time_sec:.2f}s."
+        )
+
+    # Case 4: อยู่ใน ROI น้อยกว่า 25% ของเวลาทั้งหมด
+    if presence_ratio < 0.25:
+        return (
+            62,
+            (
+                f"Customer presence ratio was low: "
+                f"{presence_ratio * 100:.1f}% of the analyzed window."
+            )
+        )
+
+    # Case 5: อยู่ระดับพอใช้ แต่ยังไม่แน่น
+    if presence_ratio < 0.45:
+        return (
+            38,
+            (
+                f"Customer presence was acceptable but not strong: "
+                f"{presence_time_sec:.2f}s out of {total_video_sec:.2f}s."
+            )
+        )
+
+    # Case 6: ปกติ
+    return (
+        10,
+        (
+            f"Customer presence was normal: "
+            f"{presence_time_sec:.2f}s out of {total_video_sec:.2f}s."
+        )
+    )
+
 
 def process_video(
     transaction_id: str,
@@ -274,20 +354,22 @@ def process_video(
     time_in_zone_sec = frames_in_zone / effective_fps
     total_video_sec = total_frames / fps
 
-    is_fraud = time_in_zone_sec < 5.0
-    fraud_score = 95 if is_fraud else 10
+    fraud_score, reason = calculate_fraud_score(
+        presence_time_sec=time_in_zone_sec,
+        total_video_sec=total_video_sec,
+        frames_in_zone=frames_in_zone,
+        analyzed_frames=analyzed_frames
+    )
+
+    risk_level = map_risk_level(fraud_score)
 
     return {
         "transactionId": transaction_id,
-        "riskLevel": "HIGH" if is_fraud else "LOW",
+        "riskLevel": risk_level,
         "fraudScore": fraud_score,
         "presenceTimeSec": round(time_in_zone_sec, 2),
         "totalVideoSec": round(total_video_sec, 2),
-        "reason": (
-            "Customer presence is suspiciously low."
-            if is_fraud
-            else "Normal transaction."
-        )
+        "reason": reason
     }
 
 
