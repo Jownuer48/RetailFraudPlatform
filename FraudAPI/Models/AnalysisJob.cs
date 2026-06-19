@@ -21,16 +21,26 @@ public class AnalysisJob
     [MaxLength(32)]
     public string Status { get; set; } = AnalysisJobStatus.Queued;
 
-    public int RetryCount { get; set; } = 0;
+    [MaxLength(100)]
+    public string? WorkerId { get; set; }
+
+    [MaxLength(100)]
+    public string? ErrorCode { get; set; }
 
     [MaxLength(2000)]
     public string? ErrorMessage { get; set; }
 
+    public int RetryCount { get; set; } = 0;
+
+    public int MaxRetryCount { get; set; } = 3;
+
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 
     public DateTime? StartedAtUtc { get; set; }
 
     public DateTime? FinishedAtUtc { get; set; }
 
-    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? LastHeartbeatAtUtc { get; set; }
 }

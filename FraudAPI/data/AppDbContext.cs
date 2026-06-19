@@ -47,8 +47,23 @@ public class AppDbContext : DbContext
                 .HasMaxLength(32)
                 .IsRequired();
 
+            entity.Property(x => x.WorkerId)
+                .HasMaxLength(100);
+
+            entity.Property(x => x.ErrorCode)
+                .HasMaxLength(100);
+
             entity.Property(x => x.ErrorMessage)
                 .HasMaxLength(2000);
+
+            entity.Property(x => x.RetryCount)
+                .IsRequired();
+
+            entity.Property(x => x.MaxRetryCount)
+                .IsRequired();
+
+            entity.HasIndex(x => x.LastHeartbeatAtUtc);
+            entity.HasIndex(x => x.WorkerId);
 
             entity.HasIndex(x => x.TransactionId);
             entity.HasIndex(x => x.CameraId);

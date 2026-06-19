@@ -25,6 +25,56 @@ public class AnalysisController : ControllerBase
         _logger = logger;
     }
 
+    [HttpPost("jobs/{jobId:guid}/heartbeat")]
+    public async Task<IActionResult> HeartbeatJob(
+        Guid jobId,
+        [FromBody] JobHeartbeatRequest? request)
+    {
+        var job = await _context.AnalysisJobs
+            .FirstOrDefaultAsync(x => x.Id == jobId);
+
+        if (job is null)
+        {
+            return NotFound(new
+            {
+                message = "Job not found",
+                jobId
+            });
+        }
+
+        if (job.Status == AnalysisJobStatus.Completed ||
+            job.Status == AnalysisJobStatus.Failed)
+        {
+            return Ok(new
+            {
+                message = "Job already finished",
+                jobId = job.Id,
+                status = job.Status
+            });
+        }
+
+        var now = DateTime.UtcNow;
+
+        job.LastHeartbeatAtUtc = now;
+        job.UpdatedAtUtc = now;
+
+        if (!string.IsNullOrWhiteSpace(request?.WorkerId))
+        {
+            job.WorkerId = request.WorkerId;
+        }
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Heartbeat received",
+            jobId = job.Id,
+            status = job.Status,
+            workerId = job.WorkerId,
+            lastHeartbeatAtUtc = job.LastHeartbeatAtUtc
+        });
+    }
+
     [HttpPost("trigger")]
 public async Task<IActionResult> TriggerAnalysis([FromBody] TriggerAnalysisRequest request)
 {
