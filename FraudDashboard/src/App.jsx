@@ -118,6 +118,9 @@ function App() {
   const [reviewBusyId, setReviewBusyId] = useState(null);
   const [reviewMessage, setReviewMessage] = useState("");
 
+  const [reviewFilter, setReviewFilter] = useState("ALL");
+  const [riskFilter, setRiskFilter] = useState("ALL");
+
   const [isTriggering, setIsTriggering] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -192,6 +195,50 @@ function App() {
     const data = await response.json();
     setHistory(Array.isArray(data) ? data : []);
   }
+
+  const filteredHistory = useMemo(() => {
+    return history.filter((record) => {
+      const reviewStatus = record.reviewStatus || "NEEDS_REVIEW";
+      const riskLevel = record.riskLevel || "UNKNOWN";
+
+      const matchReview =
+        reviewFilter === "ALL" || reviewStatus === reviewFilter;
+
+      const matchRisk =
+        riskFilter === "ALL" || riskLevel === riskFilter;
+
+      return matchReview && matchRisk;
+    });
+  }, [history, reviewFilter, riskFilter]);
+
+  const auditStats = useMemo(() => {
+    return history.reduce(
+      (acc, record) => {
+        const reviewStatus = record.reviewStatus || "NEEDS_REVIEW";
+        const riskLevel = record.riskLevel || "UNKNOWN";
+
+        acc.total += 1;
+
+        if (reviewStatus === "NEEDS_REVIEW") acc.needsReview += 1;
+        if (reviewStatus === "CONFIRMED") acc.confirmed += 1;
+        if (reviewStatus === "FALSE_POSITIVE") acc.falsePositive += 1;
+        if (riskLevel === "HIGH") acc.highRisk += 1;
+        if (riskLevel === "MEDIUM") acc.mediumRisk += 1;
+        if (riskLevel === "LOW") acc.lowRisk += 1;
+
+        return acc;
+      },
+      {
+        total: 0,
+        needsReview: 0,
+        confirmed: 0,
+        falsePositive: 0,
+        highRisk: 0,
+        mediumRisk: 0,
+        lowRisk: 0,
+      }
+    );
+  }, [history]);
 
   async function updateFraudReview(recordId, reviewStatus, reviewNote = "") {
     try {
@@ -555,7 +602,7 @@ function App() {
               </div>
 
               <p>{history[0].reason}</p>
-              
+
               {history[0].evidenceImageUrl && (
                 <a
                   className="evidence-link"
@@ -671,6 +718,70 @@ function App() {
       <section className="panel">
         <div className="panel-header">
           <div>
+            <div className="audit-summary-grid">
+              <div className="audit-summary-card">
+                <span>Total Cases</span>
+                <strong>{auditStats.total}</strong>
+              </div>
+
+              <div className="audit-summary-card warning">
+                <span>Needs Review</span>
+                <strong>{auditStats.needsReview}</strong>
+              </div>
+
+              <div className="audit-summary-card danger">
+                <span>Confirmed</span>
+                <strong>{auditStats.confirmed}</strong>
+              </div>
+
+              <div className="audit-summary-card muted">
+                <span>False Positive</span>
+                <strong>{auditStats.falsePositive}</strong>
+              </div>
+
+              <div className="audit-summary-card danger">
+                <span>High Risk</span>
+                <strong>{auditStats.highRisk}</strong>
+              </div>
+            </div>
+            <div className="audit-filter-bar">
+              <label>
+                Review
+                <select
+                  value={reviewFilter}
+                  onChange={(event) => setReviewFilter(event.target.value)}
+                >
+                  <option value="ALL">All Reviews</option>
+                  <option value="NEEDS_REVIEW">Needs Review</option>
+                  <option value="CONFIRMED">Confirmed</option>
+                  <option value="FALSE_POSITIVE">False Positive</option>
+                </select>
+              </label>
+
+              <label>
+                Risk
+                <select
+                  value={riskFilter}
+                  onChange={(event) => setRiskFilter(event.target.value)}
+                >
+                  <option value="ALL">All Risks</option>
+                  <option value="HIGH">High</option>
+                  <option value="MEDIUM">Medium</option>
+                  <option value="LOW">Low</option>
+                </select>
+              </label>
+
+              <button
+                type="button"
+                className="clear-filter-button"
+                onClick={() => {
+                  setReviewFilter("ALL");
+                  setRiskFilter("ALL");
+                }}
+              >
+                Clear Filters
+              </button>
+            </div>
             <h2>Fraud History</h2>
             {reviewMessage && (
               <div className="review-message">
@@ -701,14 +812,14 @@ function App() {
             </thead>
 
             <tbody>
-              {history.length === 0 ? (
+              {filteredHistory.length === 0 ? (
                 <tr>
                   <td colSpan="12" className="empty-row">
                     No history found
                   </td>
                 </tr>
               ) : (
-                history.map((record) => (
+                filteredHistory.map((record) => (
                   <tr key={record.id}>
                     <td>
                       <strong>{record.transactionId}</strong>
