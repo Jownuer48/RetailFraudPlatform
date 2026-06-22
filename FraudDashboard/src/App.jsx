@@ -118,6 +118,10 @@ function App() {
   const [reviewBusyId, setReviewBusyId] = useState(null);
   const [reviewMessage, setReviewMessage] = useState("");
 
+  const [queueSummary, setQueueSummary] = useState(null);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueMessage, setQueueMessage] = useState("");
+
   const [reviewFilter, setReviewFilter] = useState("ALL");
   const [riskFilter, setRiskFilter] = useState("ALL");
 
@@ -183,6 +187,57 @@ function App() {
 
     const data = await response.json();
     setJobs(Array.isArray(data) ? data : []);
+  }
+
+  async function fetchQueueSummary() {
+    try {
+      setQueueLoading(true);
+
+      const response = await fetch(`${ANALYSIS_API}/queue/summary`);
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch queue summary");
+      }
+
+      const data = await response.json();
+      setQueueSummary(data);
+    } catch (error) {
+      console.error(error);
+      setQueueMessage("Failed to load queue summary");
+    } finally {
+      setQueueLoading(false);
+    }
+  }
+
+  async function requeueFailedJobs() {
+    try {
+      setQueueLoading(true);
+      setQueueMessage("");
+
+      const response = await fetch(
+        `${ANALYSIS_API}/queue/requeue-failed?maxMessages=10`,
+        {
+          method: "POST",
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Failed to requeue failed jobs");
+      }
+
+      const result = await response.json();
+
+      setQueueMessage(`Requeued ${result.movedCount} failed job(s)`);
+
+      await fetchQueueSummary();
+      await fetchJobs();
+    } catch (error) {
+      console.error(error);
+      setQueueMessage("Failed to requeue jobs");
+    } finally {
+      setQueueLoading(false);
+    }
   }
 
   async function fetchHistory() {
@@ -273,25 +328,28 @@ function App() {
     }
   }
 
-  async function refreshAll(options = { silent: false, includeCameras: false }) {
+  async function refreshAll({ silent = false, includeCameras = false } = {}) {
+    if (!silent) {
+      setLoading(true);
+    }
+
     try {
-      if (!options.silent) {
-        setIsRefreshing(true);
+      const tasks = [
+        fetchHistory(),
+        fetchJobs(),
+        fetchQueueSummary(),
+      ];
+
+      if (includeCameras) {
+        tasks.push(fetchCameras());
       }
 
-      if (options.includeCameras) {
-        await Promise.all([fetchCameras(), fetchJobs(), fetchHistory()]);
-      } else {
-        await Promise.all([fetchJobs(), fetchHistory()]);
-      }
-
-      setError("");
-    } catch (refreshError) {
-      console.error(refreshError);
-      setError(refreshError.message ?? "Refresh failed");
+      await Promise.all(tasks);
+    } catch (error) {
+      console.error(error);
     } finally {
-      if (!options.silent) {
-        setIsRefreshing(false);
+      if (!silent) {
+        setLoading(false);
       }
     }
   }
@@ -782,6 +840,57 @@ function App() {
                 Clear Filters
               </button>
             </div>
+            <section className="panel queue-panel">
+              <div className="section-header">
+                <div>
+                  <p className="eyebrow">Message Queue</p>
+                  <h2>RabbitMQ Queue Monitor</h2>
+                </div>
+
+                <div className="queue-actions">
+                  <button
+                    type="button"
+                    className="queue-button"
+                    onClick={fetchQueueSummary}
+                    disabled={queueLoading}
+                  >
+                    Refresh
+                  </button>
+
+                  <button
+                    type="button"
+                    className="queue-button danger"
+                    onClick={requeueFailedJobs}
+                    disabled={
+                      queueLoading ||
+                      !queueSummary?.failedQueue ||
+                      queueSummary.failedQueue.messageCount <= 0
+                    }
+                  >
+                    Requeue Failed
+                  </button>
+                </div>
+              </div>
+
+              <div className="queue-summary-grid">
+                <div className="queue-card">
+                  <span>Main Queue</span>
+                  <strong>{queueSummary?.mainQueue?.messageCount ?? 0}</strong>
+                  <small>{queueSummary?.mainQueue?.name ?? "fraud_queue"}</small>
+                </div>
+
+                <div
+                  className={`queue-card failed ${(queueSummary?.failedQueue?.messageCount ?? 0) > 0 ? "has-failed" : ""
+                    }`}
+                >
+                  <span>Failed Queue</span>
+                  <strong>{queueSummary?.failedQueue?.messageCount ?? 0}</strong>
+                  <small>{queueSummary?.failedQueue?.name ?? "fraud_failed_queue"}</small>
+                </div>
+              </div>
+
+              {queueMessage && <div className="queue-message">{queueMessage}</div>}
+            </section>
             <h2>Fraud History</h2>
             {reviewMessage && (
               <div className="review-message">

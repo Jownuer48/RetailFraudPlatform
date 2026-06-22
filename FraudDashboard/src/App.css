@@ -669,3 +669,100 @@ select {
 .clear-filter-button:hover {
   background: rgba(14, 165, 233, 0.22);
 }
+
+.queue-panel {
+  margin-top: 20px;
+}
+
+.queue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.queue-button {
+  border: 0;
+  border-radius: 14px;
+  padding: 10px 14px;
+  color: #bae6fd;
+  background: rgba(14, 165, 233, 0.14);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.queue-button:hover {
+  background: rgba(14, 165, 233, 0.22);
+}
+
+.queue-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.queue-button.danger {
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.16);
+}
+
+.queue-button.danger:hover {
+  background: rgba(239, 68, 68, 0.24);
+}
+
+.queue-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.queue-card {
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: 18px;
+  padding: 18px;
+  background: rgba(2, 6, 23, 0.55);
+}
+
+.queue-card span {
+  display: block;
+  color: #94a3b8;
+  font-size: 0.8rem;
+  font-weight: 900;
+  margin-bottom: 8px;
+}
+
+.queue-card strong {
+  display: block;
+  color: #e5e7eb;
+  font-size: 2rem;
+  font-weight: 950;
+  margin-bottom: 6px;
+}
+
+.queue-card small {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.queue-card.failed {
+  border-color: rgba(148, 163, 184, 0.18);
+}
+
+.queue-card.failed.has-failed {
+  border-color: rgba(239, 68, 68, 0.34);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.queue-card.failed.has-failed strong {
+  color: #fecaca;
+}
+
+.queue-message {
+  margin-top: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 14px;
+  padding: 10px 14px;
+  color: #bae6fd;
+  background: rgba(14, 165, 233, 0.08);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
