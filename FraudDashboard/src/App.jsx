@@ -51,6 +51,31 @@ function formatDuration(job) {
   return `${diffSec}s`;
 }
 
+//helper function สำหรับแสดง label และ className ของ review status
+const REVIEW_STATUS_META = {
+  NEEDS_REVIEW: {
+    label: "Needs Review",
+    className: "needs-review",
+  },
+  CONFIRMED: {
+    label: "Confirmed",
+    className: "confirmed",
+  },
+  FALSE_POSITIVE: {
+    label: "False Positive",
+    className: "false-positive",
+  },
+};
+
+function getReviewMeta(status) {
+  return (
+    REVIEW_STATUS_META[status] || {
+      label: status || "Needs Review",
+      className: "needs-review",
+    }
+  );
+}
+
 function getStatusMeta(status) {
   return (
     STATUS_META[status] ?? {
@@ -87,8 +112,11 @@ function App() {
   const [cameras, setCameras] = useState([]);
   const [selectedCameraId, setSelectedCameraId] = useState("");
 
-  const [jobs, setJobs] = useState([]);
   const [history, setHistory] = useState([]);
+  const [jobs, setJobs] = useState([]);
+
+  const [reviewBusyId, setReviewBusyId] = useState(null);
+  const [reviewMessage, setReviewMessage] = useState("");
 
   const [isTriggering, setIsTriggering] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -163,6 +191,39 @@ function App() {
 
     const data = await response.json();
     setHistory(Array.isArray(data) ? data : []);
+  }
+
+  async function updateFraudReview(recordId, reviewStatus, reviewNote = "") {
+    try {
+      setReviewBusyId(recordId);
+      setReviewMessage("");
+
+      const response = await fetch(`${ANALYSIS_API}/records/${recordId}/review`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          reviewStatus,
+          reviewedBy: "pitpiboon",
+          reviewNote,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Review update failed");
+      }
+
+      await fetchHistory();
+
+      setReviewMessage(`Review updated: ${reviewStatus}`);
+    } catch (error) {
+      console.error(error);
+      setReviewMessage("Review update failed");
+    } finally {
+      setReviewBusyId(null);
+    }
   }
 
   async function refreshAll(options = { silent: false, includeCameras: false }) {
@@ -483,7 +544,18 @@ function App() {
                 <strong>{history[0].presenceTimeSec}s</strong>
               </div>
 
+              <div>
+                <span>Review</span>
+                <strong
+                  className={`review-badge ${getReviewMeta(history[0].reviewStatus).className
+                    }`}
+                >
+                  {getReviewMeta(history[0].reviewStatus).label}
+                </strong>
+              </div>
+
               <p>{history[0].reason}</p>
+              
               {history[0].evidenceImageUrl && (
                 <a
                   className="evidence-link"
@@ -600,6 +672,11 @@ function App() {
         <div className="panel-header">
           <div>
             <h2>Fraud History</h2>
+            {reviewMessage && (
+              <div className="review-message">
+                {reviewMessage}
+              </div>
+            )}
             <p>ผลลัพธ์ที่ Worker วิเคราะห์เสร็จและบันทึกลง SQL Server</p>
           </div>
         </div>
@@ -609,6 +686,7 @@ function App() {
             <thead>
               <tr>
                 <th>Transaction</th>
+                <th>Camera</th>
                 <th>Risk</th>
                 <th>Score</th>
                 <th>Presence</th>
@@ -616,6 +694,8 @@ function App() {
                 <th>Reason</th>
                 <th>Evidence</th>
                 <th>Clip</th>
+                <th>Review</th>
+                <th>Action</th>
                 <th>Created</th>
               </tr>
             </thead>
@@ -623,7 +703,7 @@ function App() {
             <tbody>
               {history.length === 0 ? (
                 <tr>
-                  <td colSpan="9" className="empty-row">
+                  <td colSpan="12" className="empty-row">
                     No history found
                   </td>
                 </tr>
@@ -634,11 +714,11 @@ function App() {
                       <strong>{record.transactionId}</strong>
                     </td>
 
+                    <td>{record.cameraId ?? "-"}</td>
+
                     <td>
                       <span
-                        className={`risk-badge ${String(
-                          record.riskLevel
-                        ).toLowerCase()}`}
+                        className={`risk-badge ${String(record.riskLevel).toLowerCase()}`}
                       >
                         {record.riskLevel}
                       </span>
@@ -675,6 +755,63 @@ function App() {
                       ) : (
                         "-"
                       )}
+                    </td>
+                    <td>
+                      <span
+                        className={`review-badge ${getReviewMeta(record.reviewStatus).className
+                          }`}
+                      >
+                        {getReviewMeta(record.reviewStatus).label}
+                      </span>
+                    </td>
+
+                    <td>
+                      <div className="review-actions">
+                        <button
+                          type="button"
+                          className="review-button confirm"
+                          disabled={reviewBusyId === record.id}
+                          onClick={() =>
+                            updateFraudReview(
+                              record.id,
+                              "CONFIRMED",
+                              "Auditor confirmed this case from evidence."
+                            )
+                          }
+                        >
+                          Confirm
+                        </button>
+
+                        <button
+                          type="button"
+                          className="review-button false-positive"
+                          disabled={reviewBusyId === record.id}
+                          onClick={() =>
+                            updateFraudReview(
+                              record.id,
+                              "FALSE_POSITIVE",
+                              "Auditor marked this case as false positive."
+                            )
+                          }
+                        >
+                          False
+                        </button>
+
+                        <button
+                          type="button"
+                          className="review-button reset"
+                          disabled={reviewBusyId === record.id}
+                          onClick={() =>
+                            updateFraudReview(
+                              record.id,
+                              "NEEDS_REVIEW",
+                              "Review status reset."
+                            )
+                          }
+                        >
+                          Reset
+                        </button>
+                      </div>
                     </td>
                     <td>{formatDateTime(record.createdAt)}</td>
                   </tr>

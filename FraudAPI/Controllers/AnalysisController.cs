@@ -73,6 +73,61 @@ public class AnalysisController : ControllerBase
             workerId = job.WorkerId,
             lastHeartbeatAtUtc = job.LastHeartbeatAtUtc
         });
+
+    }
+
+    [HttpPost("records/{id:int}/review")]
+    public async Task<IActionResult> ReviewFraudRecord(
+    int id,
+    [FromBody] ReviewFraudRecordRequest request)
+    {
+        var allowedStatuses = new[]
+        {
+        "NEEDS_REVIEW",
+        "CONFIRMED",
+        "FALSE_POSITIVE"
+    };
+
+        if (!allowedStatuses.Contains(request.ReviewStatus))
+        {
+            return BadRequest(new
+            {
+                message = "Invalid review status",
+                allowedStatuses
+            });
+        }
+
+        var record = await _context.FraudRecords
+            .FirstOrDefaultAsync(x => x.Id == id);
+
+        if (record is null)
+        {
+            return NotFound(new
+            {
+                message = "Fraud record not found",
+                id
+            });
+        }
+
+        record.ReviewStatus = request.ReviewStatus;
+        record.ReviewedBy = string.IsNullOrWhiteSpace(request.ReviewedBy)
+            ? "auditor"
+            : request.ReviewedBy;
+
+        record.ReviewNote = request.ReviewNote;
+        record.ReviewedAtUtc = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Review status updated",
+            record.Id,
+            record.TransactionId,
+            record.ReviewStatus,
+            record.ReviewedBy,
+            record.ReviewedAtUtc
+        });
     }
 
     [HttpPost("trigger")]

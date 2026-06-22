@@ -49,4 +49,17 @@ public class FraudRecord
 
     [MaxLength(4000)]
     public string? RoiConfigJson { get; set; }
+
+    // --- ส่วนการตรวจทาน (Human Review / Audit) ---
+
+    [MaxLength(50)]
+    public string ReviewStatus { get; set; } = "NEEDS_REVIEW";
+
+    [MaxLength(100)]
+    public string? ReviewedBy { get; set; }
+
+    [MaxLength(2000)]
+    public string? ReviewNote { get; set; }
+
+    public DateTime? ReviewedAtUtc { get; set; }
 }
