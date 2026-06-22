@@ -98,12 +98,45 @@ public class RabbitMQService : IDisposable
         {
             _channel = _connection.CreateModel();
 
+            var failedQueueName = _configuration["RabbitMq:FailedQueueName"]
+    ?? "fraud_failed_queue";
+
+            var deadLetterExchange = _configuration["RabbitMq:DeadLetterExchange"]
+                ?? "fraud_dlx";
+
+            _channel.ExchangeDeclare(
+                exchange: deadLetterExchange,
+                type: ExchangeType.Direct,
+                durable: true,
+                autoDelete: false
+            );
+
+            _channel.QueueDeclare(
+                queue: failedQueueName,
+                durable: true,
+                exclusive: false,
+                autoDelete: false,
+                arguments: null
+            );
+
+            _channel.QueueBind(
+                queue: failedQueueName,
+                exchange: deadLetterExchange,
+                routingKey: failedQueueName
+            );
+
+            var queueArguments = new Dictionary<string, object>
+            {
+                ["x-dead-letter-exchange"] = deadLetterExchange,
+                ["x-dead-letter-routing-key"] = failedQueueName
+            };
+
             _channel.QueueDeclare(
                 queue: _queueName,
                 durable: true,
                 exclusive: false,
                 autoDelete: false,
-                arguments: null
+                arguments: queueArguments
             );
 
             _channel.ConfirmSelect();

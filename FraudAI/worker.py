@@ -34,6 +34,8 @@ RABBITMQ_PORT = int(os.getenv("RABBITMQ_AMQP_PORT", "5673"))
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", "fraud_user")
 RABBITMQ_PASS = os.getenv("RABBITMQ_PASS", "fraud_pass_2026")
 RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "fraud_queue")
+RABBITMQ_FAILED_QUEUE = os.getenv("RABBITMQ_FAILED_QUEUE", "fraud_failed_queue")
+RABBITMQ_DLX = os.getenv("RABBITMQ_DLX", "fraud_dlx")
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:5233")
 
@@ -1012,7 +1014,31 @@ def main():
     connection = create_rabbitmq_connection()
     channel = connection.channel()
 
-    channel.queue_declare(queue=RABBITMQ_QUEUE, durable=True)
+    channel.exchange_declare(
+    exchange=RABBITMQ_DLX,
+    exchange_type="direct",
+    durable=True
+    )
+
+    channel.queue_declare(
+        queue=RABBITMQ_FAILED_QUEUE,
+        durable=True
+    )
+
+    channel.queue_bind(
+        queue=RABBITMQ_FAILED_QUEUE,
+        exchange=RABBITMQ_DLX,
+        routing_key=RABBITMQ_FAILED_QUEUE
+    )
+
+    channel.queue_declare(
+        queue=RABBITMQ_QUEUE,
+        durable=True,
+        arguments={
+            "x-dead-letter-exchange": RABBITMQ_DLX,
+            "x-dead-letter-routing-key": RABBITMQ_FAILED_QUEUE
+        }
+    )
 
     channel.basic_qos(prefetch_count=1)
 
