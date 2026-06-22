@@ -33,3 +33,4 @@ tempCodeRunnerFile.py
 
 # Local development config with secrets
 FraudAPI/appsettings.Development.json
+FraudAPI/wwwroot/evidence/

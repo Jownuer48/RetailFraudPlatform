@@ -7,5 +7,10 @@ public sealed record AiAnalysisResultRequest(
     int FraudScore,
     double PresenceTimeSec,
     double TotalVideoSec,
-    string Reason
+    string Reason,
+    string? SourceType,
+    string? EvidenceImagePath,
+    string? EvidenceImageUrl,
+    int? EvidenceFrameNumber,
+    string? RoiConfigJson
 );

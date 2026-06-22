@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
-const API_ROOT = "http://localhost:5233/api";
+const BACKEND_ROOT = "http://localhost:5233";
+const API_ROOT = `${BACKEND_ROOT}/api`;
 const ANALYSIS_API = `${API_ROOT}/Analysis`;
 const CAMERAS_API = `${API_ROOT}/Cameras`;
 
@@ -57,6 +58,16 @@ function getStatusMeta(status) {
       className: "status unknown",
     }
   );
+}
+
+function buildEvidenceUrl(record) {
+  if (!record?.evidenceImageUrl) return "";
+
+  if (String(record.evidenceImageUrl).startsWith("http")) {
+    return record.evidenceImageUrl;
+  }
+
+  return `${BACKEND_ROOT}${record.evidenceImageUrl}`;
 }
 
 function App() {
@@ -463,6 +474,21 @@ function App() {
               </div>
 
               <p>{history[0].reason}</p>
+              {history[0].evidenceImageUrl && (
+                <a
+                  className="evidence-link"
+                  href={buildEvidenceUrl(history[0])}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <img
+                    className="evidence-preview"
+                    src={buildEvidenceUrl(history[0])}
+                    alt="Evidence snapshot"
+                  />
+                  <span>Open Evidence Snapshot</span>
+                </a>
+              )}
             </div>
           )}
         </div>
@@ -551,6 +577,7 @@ function App() {
                 <th>Presence</th>
                 <th>Total Video</th>
                 <th>Reason</th>
+                <th>Evidence</th>
                 <th>Created</th>
               </tr>
             </thead>
@@ -558,7 +585,7 @@ function App() {
             <tbody>
               {history.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="empty-row">
+                  <td colSpan="8" className="empty-row">
                     No history found
                   </td>
                 </tr>
@@ -583,6 +610,20 @@ function App() {
                     <td>{record.presenceTimeSec}s</td>
                     <td>{record.totalVideoSec}s</td>
                     <td>{record.reason}</td>
+                    <td>
+                      {record.evidenceImageUrl ? (
+                        <a
+                          className="table-link"
+                          href={buildEvidenceUrl(record)}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open
+                        </a>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
                     <td>{formatDateTime(record.createdAt)}</td>
                   </tr>
                 ))

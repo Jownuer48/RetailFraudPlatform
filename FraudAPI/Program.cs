@@ -11,7 +11,6 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // --- 2. Services ---
 builder.Services.AddHttpClient<AiAnalysisService>();
 
-// สำคัญ: Register RabbitMQService เพื่อให้ Controller เรียกใช้งานได้
 builder.Services.AddSingleton<RabbitMQService>();
 builder.Services.AddHostedService<StaleAnalysisJobMonitorService>();
 
@@ -29,7 +28,7 @@ builder.Services.AddCors(options =>
 });
 
 // ==========================================
-// ห้ามเอา builder.Services... มาวางใต้บรรทัดนี้เด็ดขาด
+// ห้ามเอา builder.Services... มาวางใต้บรรทัดนี้
 var app = builder.Build();
 // ==========================================
 
@@ -43,6 +42,9 @@ if (app.Environment.IsDevelopment())
 app.UseCors("AllowAll");
 
 app.UseHttpsRedirection();
+
+// สำคัญ: เปิดให้ Backend serve รูป evidence จาก wwwroot/evidence/images
+app.UseStaticFiles();
 
 app.MapControllers();
 

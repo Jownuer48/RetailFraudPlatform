@@ -53,12 +53,25 @@ else:
 # ใช้กัน RTSP หรือวิดีโอยาวมากไม่ให้ worker รันไม่จบ
 MAX_ANALYSIS_SECONDS = int(os.getenv("MAX_ANALYSIS_SECONDS", "30"))
 
-# ข้ามเฟรมได้ถ้าอยากให้เร็วขึ้น เช่น 1 = วิเคราะห์ทุกเฟรม, 2 = ข้าม 1 เฟรม
 FRAME_STRIDE = int(os.getenv("FRAME_STRIDE", "1"))
 
 WORKER_ID = os.getenv("WORKER_ID", f"fraud-worker-{os.getpid()}")
-
 HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "10"))
+
+
+EVIDENCE_IMAGE_DIR = Path(
+    os.getenv(
+        "EVIDENCE_IMAGE_DIR",
+        str(PROJECT_ROOT / "FraudAPI" / "wwwroot" / "evidence" / "images")
+    )
+)
+
+EVIDENCE_IMAGE_URL_PREFIX = os.getenv(
+    "EVIDENCE_IMAGE_URL_PREFIX",
+    "/evidence/images"
+)
+
+EVIDENCE_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================
@@ -260,6 +273,113 @@ def calculate_fraud_score(
         )
     )
 
+def sanitize_filename(value: str) -> str:
+    safe_chars = []
+
+    for char in value:
+        if char.isalnum() or char in ("-", "_"):
+            safe_chars.append(char)
+        else:
+            safe_chars.append("_")
+
+    return "".join(safe_chars)
+
+
+def draw_evidence_overlay(
+    frame,
+    polygon: np.ndarray,
+    detections: Optional[sv.Detections],
+    transaction_id: str,
+    risk_hint: str = "ANALYSIS"
+):
+    output = frame.copy()
+
+    cv2.polylines(
+        output,
+        [polygon],
+        isClosed=True,
+        color=(0, 255, 255),
+        thickness=3
+    )
+
+    cv2.putText(
+        output,
+        f"TXN: {transaction_id}",
+        (24, 36),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA
+    )
+
+    cv2.putText(
+        output,
+        f"ROI / {risk_hint}",
+        (24, 72),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 255, 255),
+        2,
+        cv2.LINE_AA
+    )
+
+    if detections is not None and len(detections) > 0:
+        for index, xyxy in enumerate(detections.xyxy):
+            x1, y1, x2, y2 = map(int, xyxy)
+
+            cv2.rectangle(
+                output,
+                (x1, y1),
+                (x2, y2),
+                (0, 255, 0),
+                2
+            )
+
+            cv2.putText(
+                output,
+                f"person #{index + 1}",
+                (x1, max(24, y1 - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 0),
+                2,
+                cv2.LINE_AA
+            )
+
+    return output
+
+
+def save_evidence_snapshot(
+    frame,
+    polygon: np.ndarray,
+    detections: Optional[sv.Detections],
+    transaction_id: str,
+    frame_number: int,
+    risk_hint: str = "ANALYSIS"
+) -> tuple[str, str]:
+    safe_transaction_id = sanitize_filename(transaction_id)
+    timestamp = int(time.time())
+
+    file_name = f"{safe_transaction_id}_frame_{frame_number}_{timestamp}.jpg"
+    output_path = EVIDENCE_IMAGE_DIR / file_name
+
+    evidence_frame = draw_evidence_overlay(
+        frame=frame,
+        polygon=polygon,
+        detections=detections,
+        transaction_id=transaction_id,
+        risk_hint=risk_hint
+    )
+
+    success = cv2.imwrite(str(output_path), evidence_frame)
+
+    if not success:
+        raise RuntimeError(f"ไม่สามารถบันทึก evidence snapshot ได้: {output_path}")
+
+    evidence_url = f"{EVIDENCE_IMAGE_URL_PREFIX}/{file_name}"
+
+    return str(output_path), evidence_url
 
 def process_video(
     transaction_id: str,
@@ -296,6 +416,10 @@ def process_video(
     total_frames = 0
     analyzed_frames = 0
     last_heartbeat_at = 0.0
+    evidence_frame = None
+    evidence_detections = None
+    evidence_frame_number = None
+    evidence_priority = -1
 
     max_frames = None
     if MAX_ANALYSIS_SECONDS > 0:
@@ -340,14 +464,36 @@ def process_video(
                 verbose=False,
                 tracker="bytetrack.yaml"
             )[0]
-
+            
             detections = sv.Detections.from_ultralytics(results)
+
+            # เก็บ evidence frame แบบ priority:
+            # 2 = มีคนอยู่ใน ROI
+            # 1 = เจอคน แต่ไม่เข้า ROI
+            # 0 = frame ปกติพร้อม ROI
+            if evidence_priority < 0:
+                evidence_frame = frame.copy()
+                evidence_detections = detections
+                evidence_frame_number = total_frames
+                evidence_priority = 0
 
             if len(detections) > 0:
                 in_zone = zone.trigger(detections=detections)
 
+                if evidence_priority < 1:
+                    evidence_frame = frame.copy()
+                    evidence_detections = detections
+                    evidence_frame_number = total_frames
+                    evidence_priority = 1
+
                 if in_zone.any():
                     frames_in_zone += 1
+
+                    if evidence_priority < 2:
+                        evidence_frame = frame.copy()
+                        evidence_detections = detections
+                        evidence_frame_number = total_frames
+                        evidence_priority = 2
 
             if analyzed_frames % 100 == 0:
                 print(
@@ -376,13 +522,33 @@ def process_video(
 
     risk_level = map_risk_level(fraud_score)
 
+    evidence_image_path = None
+    evidence_image_url = None
+
+    if evidence_frame is not None and evidence_frame_number is not None:
+        evidence_image_path, evidence_image_url = save_evidence_snapshot(
+            frame=evidence_frame,
+            polygon=polygon,
+            detections=evidence_detections,
+            transaction_id=transaction_id,
+            frame_number=evidence_frame_number,
+            risk_hint=risk_level
+        )
+
+        print(f"บันทึก Evidence Snapshot สำเร็จ: {evidence_image_path}")
+
     return {
         "transactionId": transaction_id,
         "riskLevel": risk_level,
         "fraudScore": fraud_score,
         "presenceTimeSec": round(time_in_zone_sec, 2),
         "totalVideoSec": round(total_video_sec, 2),
-        "reason": reason
+        "reason": reason,
+        "sourceType": source_type,
+        "evidenceImagePath": evidence_image_path,
+        "evidenceImageUrl": evidence_image_url,
+        "evidenceFrameNumber": evidence_frame_number,
+        "roiConfigJson": json.dumps(polygon.tolist())
     }
 
 
