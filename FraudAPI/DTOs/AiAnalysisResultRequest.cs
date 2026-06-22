@@ -12,5 +12,9 @@ public sealed record AiAnalysisResultRequest(
     string? EvidenceImagePath,
     string? EvidenceImageUrl,
     int? EvidenceFrameNumber,
+    string? EvidenceVideoPath,
+    string? EvidenceVideoUrl,
+    double? EvidenceClipStartSec,
+    double? EvidenceClipEndSec,
     string? RoiConfigJson
 );

@@ -321,9 +321,16 @@ public class AnalysisController : ControllerBase
             Reason = request.Reason,
 
             SourceType = request.SourceType,
+
             EvidenceImagePath = request.EvidenceImagePath,
             EvidenceImageUrl = request.EvidenceImageUrl,
             EvidenceFrameNumber = request.EvidenceFrameNumber,
+
+            EvidenceVideoPath = request.EvidenceVideoPath,
+            EvidenceVideoUrl = request.EvidenceVideoUrl,
+            EvidenceClipStartSec = request.EvidenceClipStartSec,
+            EvidenceClipEndSec = request.EvidenceClipEndSec,
+
             RoiConfigJson = request.RoiConfigJson,
 
             CreatedAt = now
@@ -352,7 +359,8 @@ public class AnalysisController : ControllerBase
             cameraId = job?.CameraId,
             riskLevel = request.RiskLevel,
             fraudScore = request.FraudScore,
-            evidenceImageUrl = request.EvidenceImageUrl
+            evidenceImageUrl = request.EvidenceImageUrl,
+            evidenceVideoUrl = request.EvidenceVideoUrl
         });
     }
 

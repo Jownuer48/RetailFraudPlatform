@@ -59,7 +59,7 @@ function getStatusMeta(status) {
     }
   );
 }
-
+//image url ที่ได้จาก backend อาจจะเป็น full url หรือ path ที่ต้องต่อกับ BACKEND_ROOT อีกที
 function buildEvidenceUrl(record) {
   if (!record?.evidenceImageUrl) return "";
 
@@ -68,6 +68,16 @@ function buildEvidenceUrl(record) {
   }
 
   return `${BACKEND_ROOT}${record.evidenceImageUrl}`;
+}
+//video url ที่ได้จาก backend อาจจะเป็น full url หรือ path ที่ต้องต่อกับ BACKEND_ROOT อีกที
+function buildEvidenceVideoUrl(record) {
+  if (!record?.evidenceVideoUrl) return "";
+
+  if (String(record.evidenceVideoUrl).startsWith("http")) {
+    return record.evidenceVideoUrl;
+  }
+
+  return `${BACKEND_ROOT}${record.evidenceVideoUrl}`;
 }
 
 function App() {
@@ -489,6 +499,33 @@ function App() {
                   <span>Open Evidence Snapshot</span>
                 </a>
               )}
+
+              {history[0].evidenceVideoUrl && (
+                <div className="evidence-video-card">
+                  <video
+                    className="evidence-video"
+                    src={buildEvidenceVideoUrl(history[0])}
+                    controls
+                  />
+
+                  <a
+                    className="table-link"
+                    href={buildEvidenceVideoUrl(history[0])}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open Evidence Clip
+                  </a>
+
+                  {(history[0].evidenceClipStartSec !== null ||
+                    history[0].evidenceClipEndSec !== null) && (
+                      <span>
+                        Clip Window: {history[0].evidenceClipStartSec ?? "-"}s -{" "}
+                        {history[0].evidenceClipEndSec ?? "-"}s
+                      </span>
+                    )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -578,6 +615,7 @@ function App() {
                 <th>Total Video</th>
                 <th>Reason</th>
                 <th>Evidence</th>
+                <th>Clip</th>
                 <th>Created</th>
               </tr>
             </thead>
@@ -585,7 +623,7 @@ function App() {
             <tbody>
               {history.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="empty-row">
+                  <td colSpan="9" className="empty-row">
                     No history found
                   </td>
                 </tr>
@@ -619,6 +657,20 @@ function App() {
                           rel="noreferrer"
                         >
                           Open
+                        </a>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                    <td>
+                      {record.evidenceVideoUrl ? (
+                        <a
+                          className="table-link"
+                          href={buildEvidenceVideoUrl(record)}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Clip
                         </a>
                       ) : (
                         "-"

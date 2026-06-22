@@ -1,6 +1,7 @@
 using FraudAPI.Data;
 using FraudAPI.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.StaticFiles;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -44,7 +45,16 @@ app.UseCors("AllowAll");
 app.UseHttpsRedirection();
 
 // สำคัญ: เปิดให้ Backend serve รูป evidence จาก wwwroot/evidence/images
-app.UseStaticFiles();
+var contentTypeProvider = new FileExtensionContentTypeProvider();
+contentTypeProvider.Mappings[".mp4"] = "video/mp4";
+contentTypeProvider.Mappings[".jpg"] = "image/jpeg";
+contentTypeProvider.Mappings[".jpeg"] = "image/jpeg";
+contentTypeProvider.Mappings[".png"] = "image/png";
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    ContentTypeProvider = contentTypeProvider
+});
 
 app.MapControllers();
 

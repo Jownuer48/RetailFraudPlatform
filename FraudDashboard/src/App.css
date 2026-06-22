@@ -563,3 +563,26 @@ select {
 .risk-badge.medium {
   background: rgba(234, 179, 8, 0.14);
 }
+
+.evidence-video-card {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(34, 197, 94, 0.22);
+  border-radius: 18px;
+  background: rgba(2, 6, 23, 0.55);
+  padding: 14px;
+}
+
+.evidence-video {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  border-radius: 14px;
+  background: #020617;
+}
+
+.evidence-video-card span {
+  color: #94a3b8;
+  font-size: 0.86rem;
+}

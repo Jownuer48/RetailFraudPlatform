@@ -37,6 +37,16 @@ public class FraudRecord
 
     public int? EvidenceFrameNumber { get; set; }
 
+    [MaxLength(1000)]
+    public string? EvidenceVideoPath { get; set; }
+
+    [MaxLength(1000)]
+    public string? EvidenceVideoUrl { get; set; }
+
+    public double? EvidenceClipStartSec { get; set; }
+
+    public double? EvidenceClipEndSec { get; set; }
+
     [MaxLength(4000)]
     public string? RoiConfigJson { get; set; }
 }
