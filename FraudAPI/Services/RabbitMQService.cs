@@ -18,6 +18,8 @@ public class RabbitMQService : IDisposable
 
     private readonly object _lock = new();
 
+    private readonly object _channelLock = new();
+
     private IConnection? _connection;
     private IModel? _channel;
 
@@ -159,5 +161,165 @@ public class RabbitMQService : IDisposable
         {
             // Ignore dispose errors
         }
+    }
+
+    private void EnsureRabbitMqReady()
+    {
+        if (_connection is { IsOpen: true } && _channel is { IsOpen: true })
+        {
+            return;
+        }
+
+        var host = _configuration["RabbitMq:Host"] ?? "localhost";
+        var port = int.Parse(_configuration["RabbitMq:Port"] ?? "5673");
+        var username = _configuration["RabbitMq:Username"] ?? "fraud_user";
+        var password = _configuration["RabbitMq:Password"] ?? "fraud_pass_2026";
+
+        var queueName = _configuration["RabbitMq:QueueName"] ?? "fraud_queue";
+        var failedQueueName = _configuration["RabbitMq:FailedQueueName"] ?? "fraud_failed_queue";
+        var deadLetterExchange = _configuration["RabbitMq:DeadLetterExchange"] ?? "fraud_dlx";
+
+        var factory = new ConnectionFactory
+        {
+            HostName = host,
+            Port = port,
+            UserName = username,
+            Password = password
+        };
+
+        _connection = factory.CreateConnection();
+        _channel = _connection.CreateModel();
+
+        _channel.ExchangeDeclare(
+            exchange: deadLetterExchange,
+            type: ExchangeType.Direct,
+            durable: true,
+            autoDelete: false
+        );
+
+        _channel.QueueDeclare(
+            queue: failedQueueName,
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            arguments: null
+        );
+
+        _channel.QueueBind(
+            queue: failedQueueName,
+            exchange: deadLetterExchange,
+            routingKey: failedQueueName
+        );
+
+        var queueArguments = new Dictionary<string, object>
+        {
+            ["x-dead-letter-exchange"] = deadLetterExchange,
+            ["x-dead-letter-routing-key"] = failedQueueName
+        };
+
+        _channel.QueueDeclare(
+            queue: queueName,
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            arguments: queueArguments
+        );
+    }
+
+    public uint GetQueueMessageCount(string queueName)
+    {
+        lock (_channelLock)
+        {
+            EnsureRabbitMqReady();
+
+            if (_channel is null)
+            {
+                throw new InvalidOperationException("RabbitMQ channel is not initialized.");
+            }
+
+            var result = _channel.QueueDeclarePassive(queueName);
+            return result.MessageCount;
+        }
+    }
+
+    public object GetQueueSummary()
+    {
+        var mainQueueName = _configuration["RabbitMq:QueueName"] ?? "fraud_queue";
+        var failedQueueName = _configuration["RabbitMq:FailedQueueName"] ?? "fraud_failed_queue";
+
+        return new
+        {
+            mainQueue = new
+            {
+                name = mainQueueName,
+                messageCount = GetQueueMessageCount(mainQueueName)
+            },
+            failedQueue = new
+            {
+                name = failedQueueName,
+                messageCount = GetQueueMessageCount(failedQueueName)
+            }
+        };
+    }
+
+    public int RequeueFailedMessages(int maxMessages = 10)
+    {
+        var mainQueueName = _configuration["RabbitMq:QueueName"] ?? "fraud_queue";
+        var failedQueueName = _configuration["RabbitMq:FailedQueueName"] ?? "fraud_failed_queue";
+
+        if (maxMessages <= 0)
+        {
+            maxMessages = 1;
+        }
+
+        if (maxMessages > 100)
+        {
+            maxMessages = 100;
+        }
+
+        var movedCount = 0;
+
+        lock (_channelLock)
+        {
+            EnsureRabbitMqReady();
+
+            if (_channel is null)
+            {
+                throw new InvalidOperationException("RabbitMQ channel is not initialized.");
+            }
+
+            for (var i = 0; i < maxMessages; i++)
+            {
+                var message = _channel.BasicGet(
+                    queue: failedQueueName,
+                    autoAck: false
+                );
+
+                if (message is null)
+                {
+                    break;
+                }
+
+                var properties = _channel.CreateBasicProperties();
+                properties.Persistent = true;
+                properties.ContentType = "application/json";
+
+                _channel.BasicPublish(
+                    exchange: string.Empty,
+                    routingKey: mainQueueName,
+                    basicProperties: properties,
+                    body: message.Body
+                );
+
+                _channel.BasicAck(
+                    deliveryTag: message.DeliveryTag,
+                    multiple: false
+                );
+
+                movedCount++;
+            }
+        }
+
+        return movedCount;
     }
 }

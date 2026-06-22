@@ -456,4 +456,27 @@ public class AnalysisController : ControllerBase
 
         return Ok(job);
     }
+
+    [HttpGet("queue/summary")]
+    public IActionResult GetQueueSummary()
+    {
+        // แก้ไข _rabbitMqService เป็น _rabbitMQService ให้ตรงกับที่ประกาศไว้ด้านบน
+        var summary = _rabbitMQService.GetQueueSummary();
+
+        return Ok(summary);
+    }
+
+    [HttpPost("queue/requeue-failed")]
+    public IActionResult RequeueFailedMessages([FromQuery] int maxMessages = 10)
+    {
+        // แก้ไข _rabbitMqService เป็น _rabbitMQService ให้ตรงกับที่ประกาศไว้ด้านบน
+        var movedCount = _rabbitMQService.RequeueFailedMessages(maxMessages);
+
+        return Ok(new
+        {
+            message = "Failed messages requeued",
+            movedCount,
+            maxMessages
+        });
+    }
 }
