@@ -192,31 +192,48 @@ public async Task<IActionResult> TriggerAnalysis([FromBody] TriggerAnalysisReque
 }
 
     [HttpPost("jobs/{jobId:guid}/processing")]
-    public async Task<IActionResult> MarkJobAsProcessing(Guid jobId)
+    public async Task<IActionResult> MarkJobProcessing(Guid jobId)
     {
-        var job = await _context.AnalysisJobs.FindAsync(jobId);
+        var job = await _context.AnalysisJobs
+            .FirstOrDefaultAsync(x => x.Id == jobId);
 
-        if (job is null)
+    if (job is null)
+    {
+        return NotFound(new
         {
-            return NotFound(new
-            {
-                message = "Job not found",
-                jobId
-            });
-        }
+            message = "Job not found",
+            jobId
+        });
+    }
 
-        job.Status = AnalysisJobStatus.Processing;
-        job.StartedAtUtc ??= DateTime.UtcNow;
-        job.UpdatedAtUtc = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-
+    if (job.Status == AnalysisJobStatus.Completed ||
+        job.Status == AnalysisJobStatus.Failed)
+    {
         return Ok(new
         {
-            message = "Job marked as processing",
+            message = "Job already finished",
             jobId = job.Id,
             status = job.Status
         });
+    }
+
+    var now = DateTime.UtcNow;
+
+    job.Status = AnalysisJobStatus.Processing;
+    job.StartedAtUtc ??= now;
+    job.UpdatedAtUtc = now;
+    job.LastHeartbeatAtUtc = now;
+
+    await _context.SaveChangesAsync();
+
+    return Ok(new
+    {
+        message = "Job marked as processing",
+        jobId = job.Id,
+        status = job.Status,
+        startedAtUtc = job.StartedAtUtc,
+        lastHeartbeatAtUtc = job.LastHeartbeatAtUtc
+    });
     }
 
     [HttpPost("jobs/{jobId:guid}/failed")]

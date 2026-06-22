@@ -56,6 +56,10 @@ MAX_ANALYSIS_SECONDS = int(os.getenv("MAX_ANALYSIS_SECONDS", "30"))
 # ข้ามเฟรมได้ถ้าอยากให้เร็วขึ้น เช่น 1 = วิเคราะห์ทุกเฟรม, 2 = ข้าม 1 เฟรม
 FRAME_STRIDE = int(os.getenv("FRAME_STRIDE", "1"))
 
+WORKER_ID = os.getenv("WORKER_ID", f"fraud-worker-{os.getpid()}")
+
+HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "10"))
+
 
 # ============================================================
 # 2. Load AI Model
@@ -261,7 +265,8 @@ def process_video(
     transaction_id: str,
     video_source: str,
     source_type: str = "FILE",
-    roi_polygon: Optional[list[list[int]]] = None
+    roi_polygon: Optional[list[list[int]]] = None,
+    job_id: Optional[str] = None
 ) -> dict:
     """
     วิเคราะห์วิดีโอ:
@@ -290,6 +295,7 @@ def process_video(
     frames_in_zone = 0
     total_frames = 0
     analyzed_frames = 0
+    last_heartbeat_at = 0.0
 
     max_frames = None
     if MAX_ANALYSIS_SECONDS > 0:
@@ -319,6 +325,13 @@ def process_video(
                 continue
 
             analyzed_frames += 1
+            
+            now_ts = time.time()
+
+            if job_id and now_ts - last_heartbeat_at >= HEARTBEAT_INTERVAL_SECONDS:
+                mark_job_heartbeat(job_id)
+                last_heartbeat_at = now_ts
+                
 
             results = model.track(
                 frame,
@@ -388,6 +401,23 @@ def mark_job_processing(job_id: str):
 
     print(f"อัปเดต Job เป็น PROCESSING สำเร็จ: {job_id}")
 
+def mark_job_heartbeat(job_id: str):
+    if not job_id:
+        return
+
+    url = f"{BACKEND_BASE_URL}/api/Analysis/jobs/{job_id}/heartbeat"
+
+    response = requests.post(
+        url,
+        json={
+            "workerId": WORKER_ID
+        },
+        timeout=10
+    )
+
+    response.raise_for_status()
+
+    print(f"ส่ง Heartbeat สำเร็จ: {job_id} / {WORKER_ID}")
 
 def mark_job_failed(job_id: str, error_message: str):
     if not job_id:
@@ -514,7 +544,8 @@ def callback(ch, method, properties, body):
             transaction_id=transaction_id,
             video_source=video_source,
             source_type=source_type,
-            roi_polygon=roi_polygon
+            roi_polygon=roi_polygon,
+            job_id=job_id
         )
 
         if job_id:

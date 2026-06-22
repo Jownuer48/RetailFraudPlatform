@@ -13,6 +13,7 @@ builder.Services.AddHttpClient<AiAnalysisService>();
 
 // สำคัญ: Register RabbitMQService เพื่อให้ Controller เรียกใช้งานได้
 builder.Services.AddSingleton<RabbitMQService>();
+builder.Services.AddHostedService<StaleAnalysisJobMonitorService>();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
