@@ -224,6 +224,7 @@ public class RabbitMQService : IDisposable
             autoDelete: false,
             arguments: queueArguments
         );
+        _channel.ConfirmSelect();
     }
 
     public uint GetQueueMessageCount(string queueName)
