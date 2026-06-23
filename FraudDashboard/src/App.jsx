@@ -482,6 +482,20 @@ function App() {
         throw new Error("Please select camera");
       }
 
+      if (!hasOnlineWorker) {
+        throw new Error("No AI Worker online. Please start the Python worker first.");
+      }
+
+      if (!selectedCameraHealth) {
+        throw new Error("Camera health not loaded. Please refresh camera health.");
+      }
+
+      if (!isSelectedCameraHealthy) {
+        throw new Error(
+          `Camera is not ready: ${selectedCameraHealth.sourceStatus ?? "UNKNOWN"}`
+        );
+      }
+
       const response = await fetch(`${ANALYSIS_API}/trigger`, {
         method: "POST",
         headers: {
@@ -547,6 +561,40 @@ function App() {
   const primaryWorker = onlineWorkers[0] || workerStatuses[0] || null;
 
   const primaryWorkerMeta = getWorkerStatusMeta(primaryWorker?.status);
+  const selectedCameraHealth = useMemo(() => {
+    return (
+      cameraHealth.find((camera) => camera.id === selectedCameraId) ?? null
+    );
+  }, [cameraHealth, selectedCameraId]);
+
+  const hasOnlineWorker = workerStatuses.some(
+    (worker) => worker.status === "ONLINE"
+  );
+
+  const isSelectedCameraHealthy =
+    selectedCameraHealth?.status === "ONLINE" &&
+    selectedCameraHealth?.isHealthy === true;
+
+  const hasTransactionId = transactionId.trim().length > 0;
+
+  const canStartAnalysis =
+    hasTransactionId &&
+    selectedCameraId &&
+    hasOnlineWorker &&
+    isSelectedCameraHealthy &&
+    !isTriggering;
+
+  const startBlockedReason = (() => {
+    if (!hasTransactionId) return "Transaction ID is required";
+    if (!selectedCameraId) return "Please select camera";
+    if (!hasOnlineWorker) return "No AI Worker online";
+    if (!selectedCameraHealth) return "Camera health not loaded";
+    if (!isSelectedCameraHealthy) {
+      return `Camera not ready: ${selectedCameraHealth.sourceStatus ?? "UNKNOWN"}`;
+    }
+
+    return "";
+  })();
 
   return (
     <main className="app-shell">
@@ -656,10 +704,49 @@ function App() {
               </div>
             )}
 
+            <div className="preflight-card">
+              <div className="preflight-header">
+                <div>
+                  <span>Preflight Check</span>
+                  <strong>{canStartAnalysis ? "Ready to Analyze" : "Blocked"}</strong>
+                </div>
+
+                <span className={`preflight-badge ${canStartAnalysis ? "ready" : "blocked"}`}>
+                  {canStartAnalysis ? "READY" : "NOT READY"}
+                </span>
+              </div>
+
+              <div className="preflight-grid">
+                <div className={hasTransactionId ? "preflight-item ready" : "preflight-item blocked"}>
+                  <span>Transaction</span>
+                  <strong>{hasTransactionId ? "OK" : "Missing"}</strong>
+                </div>
+
+                <div className={hasOnlineWorker ? "preflight-item ready" : "preflight-item blocked"}>
+                  <span>AI Worker</span>
+                  <strong>{hasOnlineWorker ? "ONLINE" : "OFFLINE"}</strong>
+                </div>
+
+                <div className={isSelectedCameraHealthy ? "preflight-item ready" : "preflight-item blocked"}>
+                  <span>Camera</span>
+                  <strong>
+                    {selectedCameraHealth?.sourceStatus ?? "NOT LOADED"}
+                  </strong>
+                </div>
+              </div>
+
+              {!canStartAnalysis && (
+                <div className="preflight-reason">
+                  {startBlockedReason}
+                </div>
+              )}
+            </div>
+
             <div className="button-row">
               <button
                 type="submit"
-                disabled={isTriggering || !selectedCameraId}
+                disabled={!canStartAnalysis}
+                title={startBlockedReason}
               >
                 {isTriggering ? "Sending..." : "Start CCTV Analysis"}
               </button>
