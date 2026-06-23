@@ -5,6 +5,7 @@ const BACKEND_ROOT = "http://localhost:5233";
 const API_ROOT = `${BACKEND_ROOT}/api`;
 const ANALYSIS_API = `${API_ROOT}/Analysis`;
 const CAMERAS_API = `${API_ROOT}/Cameras`;
+const WORKERS_API = `${API_ROOT}/Workers`;
 
 const STATUS_META = {
   QUEUED: {
@@ -105,6 +106,33 @@ function buildEvidenceVideoUrl(record) {
   return `${BACKEND_ROOT}${record.evidenceVideoUrl}`;
 }
 
+function formatSecondsAgo(seconds) {
+  if (seconds === null || seconds === undefined) return "-";
+
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s ago`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainSeconds = Math.round(seconds % 60);
+
+  return `${minutes}m ${remainSeconds}s ago`;
+}
+
+function getWorkerStatusMeta(status) {
+  if (status === "ONLINE") {
+    return {
+      label: "ONLINE",
+      className: "online",
+    };
+  }
+
+  return {
+    label: "OFFLINE",
+    className: "offline",
+  };
+}
+
 function App() {
   const [transactionId, setTransactionId] = useState("TXN-CCTV-001");
   const [lastSubmittedJobId, setLastSubmittedJobId] = useState("");
@@ -121,6 +149,8 @@ function App() {
   const [queueSummary, setQueueSummary] = useState(null);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueMessage, setQueueMessage] = useState("");
+  const [workerStatuses, setWorkerStatuses] = useState([]);
+  const [workerMessage, setWorkerMessage] = useState("");
 
   const [reviewFilter, setReviewFilter] = useState("ALL");
   const [riskFilter, setRiskFilter] = useState("ALL");
@@ -206,6 +236,51 @@ function App() {
       setQueueMessage("Failed to load queue summary");
     } finally {
       setQueueLoading(false);
+    }
+  }
+
+  async function fetchWorkerStatuses() {
+    try {
+      const response = await fetch(`${WORKERS_API}/status`);
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch worker statuses");
+      }
+
+      const data = await response.json();
+
+      setWorkerStatuses(Array.isArray(data) ? data : []);
+      setWorkerMessage("");
+    } catch (error) {
+      console.error(error);
+      setWorkerMessage("Failed to load worker status");
+    }
+  }
+
+  async function clearOfflineWorkers() {
+    try {
+      setWorkerMessage("");
+
+      const response = await fetch(
+        `${WORKERS_API}/offline?olderThanMinutes=1`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Failed to clear offline workers");
+      }
+
+      const result = await response.json();
+
+      setWorkerMessage(`Cleared ${result.deletedCount} offline worker(s)`);
+
+      await fetchWorkerStatuses();
+    } catch (error) {
+      console.error(error);
+      setWorkerMessage("Failed to clear offline workers");
     }
   }
 
@@ -330,7 +405,7 @@ function App() {
 
   async function refreshAll({ silent = false, includeCameras = false } = {}) {
     if (!silent) {
-      setLoading(true);
+      setIsRefreshing(true);
     }
 
     try {
@@ -338,6 +413,7 @@ function App() {
         fetchHistory(),
         fetchJobs(),
         fetchQueueSummary(),
+        fetchWorkerStatuses(),
       ];
 
       if (includeCameras) {
@@ -349,7 +425,7 @@ function App() {
       console.error(error);
     } finally {
       if (!silent) {
-        setLoading(false);
+        setIsRefreshing(false);
       }
     }
   }
@@ -427,6 +503,14 @@ function App() {
 
     return () => clearInterval(intervalId);
   }, []);
+
+  const onlineWorkers = workerStatuses.filter(
+    (worker) => worker.status === "ONLINE"
+  );
+
+  const primaryWorker = onlineWorkers[0] || workerStatuses[0] || null;
+
+  const primaryWorkerMeta = getWorkerStatusMeta(primaryWorker?.status);
 
   return (
     <main className="app-shell">
@@ -840,6 +924,10 @@ function App() {
                 Clear Filters
               </button>
             </div>
+            
+            {/* ------------------------------------- */}
+            {/* 1. RabbitMQ Queue Monitor Panel */}
+            {/* ------------------------------------- */}
             <section className="panel queue-panel">
               <div className="section-header">
                 <div>
@@ -891,6 +979,122 @@ function App() {
 
               {queueMessage && <div className="queue-message">{queueMessage}</div>}
             </section>
+
+            {/* ------------------------------------- */}
+            {/* 2. Worker Health Monitor Panel */}
+            {/* ------------------------------------- */}
+            <section className="panel worker-health-panel">
+              <div className="section-header">
+                <div>
+                  <p className="eyebrow">AI Worker</p>
+                  <h2>Worker Health Monitor</h2>
+                </div>
+
+                <div className="queue-actions">
+                  <button
+                    type="button"
+                    className="queue-button"
+                    onClick={fetchWorkerStatuses}
+                  >
+                    Refresh Worker
+                  </button>
+
+                  <button
+                    type="button"
+                    className="queue-button danger"
+                    onClick={clearOfflineWorkers}
+                  >
+                    Clear Offline
+                  </button>
+                </div>
+              </div>
+
+              {primaryWorker ? (
+                <>
+                  <div className="worker-health-main">
+                    <div>
+                      <span>Status</span>
+                      <strong
+                        className={`worker-status-badge ${primaryWorkerMeta.className}`}
+                      >
+                        {primaryWorkerMeta.label}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>Worker ID</span>
+                      <strong>{primaryWorker.workerId}</strong>
+                    </div>
+
+                    <div>
+                      <span>Last Seen</span>
+                      <strong>{formatSecondsAgo(primaryWorker.secondsSinceLastSeen)}</strong>
+                    </div>
+
+                    <div>
+                      <span>Processed</span>
+                      <strong>{primaryWorker.processedJobs ?? 0}</strong>
+                    </div>
+
+                    <div>
+                      <span>Failed</span>
+                      <strong>{primaryWorker.failedJobs ?? 0}</strong>
+                    </div>
+                  </div>
+
+                  <div className="worker-current-job">
+                    <div>
+                      <span>Current Job</span>
+                      <strong>{primaryWorker.currentJobId ?? "None"}</strong>
+                    </div>
+
+                    <div>
+                      <span>Transaction</span>
+                      <strong>{primaryWorker.currentTransactionId ?? "-"}</strong>
+                    </div>
+
+                    <div>
+                      <span>Camera</span>
+                      <strong>{primaryWorker.currentCameraId ?? "-"}</strong>
+                    </div>
+                  </div>
+
+                  {primaryWorker.lastError && (
+                    <div className="worker-error">
+                      {primaryWorker.lastError}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="empty-row">
+                  No worker heartbeat received yet.
+                </div>
+              )}
+
+              {workerMessage && (
+                <div className="queue-message">
+                  {workerMessage}
+                </div>
+              )}
+
+              {workerStatuses.length > 1 && (
+                <div className="worker-list">
+                  {workerStatuses.map((worker) => {
+                    const meta = getWorkerStatusMeta(worker.status);
+
+                    return (
+                      <div className="worker-list-item" key={worker.workerId}>
+                        <span className={`worker-dot ${meta.className}`} />
+                        <strong>{worker.workerId}</strong>
+                        <span>{meta.label}</span>
+                        <span>{formatSecondsAgo(worker.secondsSinceLastSeen)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
             <h2>Fraud History</h2>
             {reviewMessage && (
               <div className="review-message">

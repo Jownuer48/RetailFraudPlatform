@@ -11,6 +11,7 @@ import requests
 import supervision as sv
 import shutil
 import subprocess
+import threading
 from ultralytics import YOLO
 
 try:
@@ -58,6 +59,17 @@ FRAME_STRIDE = int(os.getenv("FRAME_STRIDE", "1"))
 WORKER_ID = os.getenv("WORKER_ID", f"fraud-worker-{os.getpid()}")
 HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "10"))
 
+WORKER_STATUS_HEARTBEAT_INTERVAL_SECONDS = int(
+    os.getenv("WORKER_STATUS_HEARTBEAT_INTERVAL_SECONDS", "10")
+)
+
+_worker_status_lock = threading.Lock()
+_current_job_id = None
+_current_transaction_id = None
+_current_camera_id = None
+_processed_jobs = 0
+_failed_jobs = 0
+_last_error = None
 
 EVIDENCE_IMAGE_DIR = Path(
     os.getenv(
@@ -385,6 +397,7 @@ def save_evidence_snapshot(
 
     return str(output_path), evidence_url
 
+
 def get_ffmpeg_path() -> str | None:
     configured_path = os.getenv("FFMPEG_PATH")
 
@@ -406,10 +419,7 @@ def get_ffmpeg_path() -> str | None:
             return str(candidate)
 
     winget_packages = (
-        Path(os.environ.get("LOCALAPPDATA", ""))
-        / "Microsoft"
-        / "WinGet"
-        / "Packages"
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
     )
 
     if winget_packages.exists():
@@ -417,6 +427,7 @@ def get_ffmpeg_path() -> str | None:
             return str(ffmpeg_exe)
 
     return None
+
 
 def transcode_video_to_h264(input_path: Path, output_path: Path) -> bool:
     ffmpeg_path = get_ffmpeg_path()
@@ -443,14 +454,10 @@ def transcode_video_to_h264(input_path: Path, output_path: Path) -> bool:
         "-movflags",
         "+faststart",
         "-an",
-        str(output_path)
+        str(output_path),
     ]
 
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True
-    )
+    result = subprocess.run(command, capture_output=True, text=True)
 
     if result.returncode != 0:
         print("แปลงคลิปเป็น H.264 ไม่สำเร็จ")
@@ -459,12 +466,13 @@ def transcode_video_to_h264(input_path: Path, output_path: Path) -> bool:
 
     return output_path.exists() and output_path.stat().st_size > 0
 
+
 def save_evidence_clip_from_file(
     video_source: str,
     transaction_id: str,
     center_frame_number: int,
     fps: float,
-    total_frames: int
+    total_frames: int,
 ):
     if not video_source:
         return None, None, None, None
@@ -514,12 +522,7 @@ def save_evidence_clip_from_file(
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 
-    writer = cv2.VideoWriter(
-        str(raw_output_path),
-        fourcc,
-        fps,
-        (width, height)
-    )
+    writer = cv2.VideoWriter(str(raw_output_path), fourcc, fps, (width, height))
 
     if not writer.isOpened():
         cap.release()
@@ -549,8 +552,7 @@ def save_evidence_clip_from_file(
         return None, None, None, None
 
     converted = transcode_video_to_h264(
-        input_path=raw_output_path,
-        output_path=final_output_path
+        input_path=raw_output_path, output_path=final_output_path
     )
 
     if converted:
@@ -565,7 +567,7 @@ def save_evidence_clip_from_file(
             str(final_output_path),
             evidence_video_url,
             round(clip_start_sec, 2),
-            round(clip_end_sec, 2)
+            round(clip_end_sec, 2),
         )
 
     print("ใช้ raw mp4v แทน แต่ browser อาจเล่นไม่ได้")
@@ -576,7 +578,7 @@ def save_evidence_clip_from_file(
         str(raw_output_path),
         evidence_video_url,
         round(clip_start_sec, 2),
-        round(clip_end_sec, 2)
+        round(clip_end_sec, 2),
     )
 
 
@@ -765,16 +767,13 @@ def process_video(
         "totalVideoSec": round(total_video_sec, 2),
         "reason": reason,
         "sourceType": source_type,
-        
         "evidenceImagePath": evidence_image_path,
         "evidenceImageUrl": evidence_image_url,
         "evidenceFrameNumber": evidence_frame_number,
-        
         "evidenceVideoPath": evidence_video_path,
         "evidenceVideoUrl": evidence_video_url,
         "evidenceClipStartSec": evidence_clip_start_sec,
         "evidenceClipEndSec": evidence_clip_end_sec,
-        
         "roiConfigJson": json.dumps(polygon.tolist()),
     }
 
@@ -857,6 +856,76 @@ def create_rabbitmq_connection() -> pika.BlockingConnection:
     raise RuntimeError("เชื่อมต่อ RabbitMQ ไม่สำเร็จหลัง retry หลายครั้ง")
 
 
+def set_worker_current_job(job_id=None, transaction_id=None, camera_id=None):
+    global _current_job_id
+    global _current_transaction_id
+    global _current_camera_id
+
+    with _worker_status_lock:
+        _current_job_id = job_id
+        _current_transaction_id = transaction_id
+        _current_camera_id = camera_id
+
+
+def increment_worker_processed_jobs():
+    global _processed_jobs
+    global _last_error
+
+    with _worker_status_lock:
+        _processed_jobs += 1
+        _last_error = None
+
+
+def increment_worker_failed_jobs(error_message: str):
+    global _failed_jobs
+    global _last_error
+
+    with _worker_status_lock:
+        _failed_jobs += 1
+        _last_error = error_message
+
+
+def build_worker_heartbeat_payload():
+    with _worker_status_lock:
+        return {
+            "workerId": WORKER_ID,
+            "status": "ONLINE",
+            "currentJobId": _current_job_id,
+            "currentTransactionId": _current_transaction_id,
+            "currentCameraId": _current_camera_id,
+            "processedJobs": _processed_jobs,
+            "failedJobs": _failed_jobs,
+            "lastError": _last_error,
+        }
+
+
+def send_worker_status_heartbeat():
+    url = f"{BACKEND_BASE_URL}/api/Workers/heartbeat"
+
+    payload = build_worker_heartbeat_payload()
+
+    response = requests.post(url, json=payload, timeout=10)
+
+    response.raise_for_status()
+
+
+def worker_status_heartbeat_loop():
+    while True:
+        try:
+            send_worker_status_heartbeat()
+            print(f"ส่ง Worker Health สำเร็จ: {WORKER_ID}")
+        except Exception as error:
+            print(f"ส่ง Worker Health ไม่สำเร็จ: {error}")
+
+        time.sleep(WORKER_STATUS_HEARTBEAT_INTERVAL_SECONDS)
+
+
+def start_worker_status_heartbeat_thread():
+    thread = threading.Thread(target=worker_status_heartbeat_loop, daemon=True)
+
+    thread.start()
+
+
 # ============================================================
 # 7. Message Callback
 # ============================================================
@@ -888,6 +957,12 @@ def callback(ch, method, properties, body):
         camera_id = data.get("cameraId")
         video_path = data.get("videoPath")
 
+        set_worker_current_job(
+            job_id=job_id,
+            transaction_id=transaction_id,
+            camera_id=camera_id
+        )
+
         if not transaction_id:
             raise ValueError("transactionId is required")
 
@@ -910,7 +985,8 @@ def callback(ch, method, properties, body):
             )
 
         video_source, source_type, roi_polygon, camera = resolve_video_source(
-            camera_id=camera_id, fallback_video_path=video_path
+            camera_id=camera_id,
+            fallback_video_path=video_path
         )
 
         if camera:
@@ -942,11 +1018,17 @@ def callback(ch, method, properties, body):
             f"Presence={result_data['presenceTimeSec']}s"
         )
 
-        response = requests.post(BACKEND_WEBHOOK_URL, json=result_data, timeout=20)
+        response = requests.post(
+            BACKEND_WEBHOOK_URL,
+            json=result_data,
+            timeout=20
+        )
 
         response.raise_for_status()
 
         print(f"ส่งผลลัพธ์กลับ Backend สำเร็จ: {BACKEND_WEBHOOK_URL}")
+
+        increment_worker_processed_jobs()
 
         ch.basic_ack(delivery_tag=delivery_tag)
 
@@ -955,12 +1037,12 @@ def callback(ch, method, properties, body):
     except requests.RequestException as error:
         print(f"เกิดปัญหาการเชื่อมต่อ HTTP: {error}")
 
-        # ถ้าเป็นปัญหาตอนส่งผลกลับ backend ให้ requeue ได้
-        # แต่ถ้าเป็นปัญหากล้อง config 404 จาก /api/Cameras ก็ควร FAILED
         try:
             status_code = getattr(error.response, "status_code", None)
 
             if status_code == 404:
+                increment_worker_failed_jobs(str(error))
+
                 if job_id:
                     mark_job_failed(
                         job_id,
@@ -981,6 +1063,8 @@ def callback(ch, method, properties, body):
     except FileNotFoundError as error:
         print(f"ไฟล์วิดีโอไม่ถูกต้อง: {error}")
 
+        increment_worker_failed_jobs(str(error))
+
         try:
             if job_id:
                 mark_job_failed(job_id, str(error))
@@ -994,6 +1078,8 @@ def callback(ch, method, properties, body):
     except Exception as error:
         print(f"เกิดข้อผิดพลาดระหว่างประมวลผลงาน: {error}")
 
+        increment_worker_failed_jobs(str(error))
+
         try:
             if job_id:
                 mark_job_failed(job_id, str(error))
@@ -1004,7 +1090,9 @@ def callback(ch, method, properties, body):
 
         ch.basic_reject(delivery_tag=delivery_tag, requeue=False)
 
-
+    finally:
+        set_worker_current_job()
+        
 # ============================================================
 # 8. Worker Main
 # ============================================================
@@ -1015,20 +1103,15 @@ def main():
     channel = connection.channel()
 
     channel.exchange_declare(
-    exchange=RABBITMQ_DLX,
-    exchange_type="direct",
-    durable=True
+        exchange=RABBITMQ_DLX, exchange_type="direct", durable=True
     )
 
-    channel.queue_declare(
-        queue=RABBITMQ_FAILED_QUEUE,
-        durable=True
-    )
+    channel.queue_declare(queue=RABBITMQ_FAILED_QUEUE, durable=True)
 
     channel.queue_bind(
         queue=RABBITMQ_FAILED_QUEUE,
         exchange=RABBITMQ_DLX,
-        routing_key=RABBITMQ_FAILED_QUEUE
+        routing_key=RABBITMQ_FAILED_QUEUE,
     )
 
     channel.queue_declare(
@@ -1036,8 +1119,8 @@ def main():
         durable=True,
         arguments={
             "x-dead-letter-exchange": RABBITMQ_DLX,
-            "x-dead-letter-routing-key": RABBITMQ_FAILED_QUEUE
-        }
+            "x-dead-letter-routing-key": RABBITMQ_FAILED_QUEUE,
+        },
     )
 
     channel.basic_qos(prefetch_count=1)
@@ -1054,6 +1137,9 @@ def main():
     print("กด Ctrl+C เพื่อหยุด\n")
 
     try:
+        
+        print("Worker started. Waiting for jobs...")
+        start_worker_status_heartbeat_thread()
         channel.start_consuming()
 
     except KeyboardInterrupt:
