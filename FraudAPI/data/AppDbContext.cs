@@ -16,12 +16,15 @@ public class AppDbContext : DbContext
 
     public DbSet<Camera> Cameras => Set<Camera>();
 
+    public DbSet<WorkerStatus> WorkerStatuses => Set<WorkerStatus>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
 
         ConfigureAnalysisJob(modelBuilder);
         ConfigureCamera(modelBuilder);
+        ConfigureWorkerStatus(modelBuilder);
     }
 
     private static void ConfigureAnalysisJob(ModelBuilder modelBuilder)
@@ -114,6 +117,34 @@ public class AppDbContext : DbContext
                 IsActive = true,
                 CreatedAtUtc = new DateTime(2026, 6, 19, 0, 0, 0, DateTimeKind.Utc)
             });
+        });
+    }
+
+    private static void ConfigureWorkerStatus(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<WorkerStatus>(entity =>
+        {
+            entity.HasKey(x => x.WorkerId);
+
+            entity.Property(x => x.WorkerId)
+                .HasMaxLength(100);
+
+            entity.Property(x => x.Status)
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.Property(x => x.CurrentTransactionId)
+                .HasMaxLength(100);
+
+            entity.Property(x => x.CurrentCameraId)
+                .HasMaxLength(100);
+
+            entity.Property(x => x.LastError)
+                .HasMaxLength(2000);
+
+            entity.HasIndex(x => x.Status);
+            entity.HasIndex(x => x.LastSeenAtUtc);
+            entity.HasIndex(x => x.CurrentJobId);
         });
     }
 }
