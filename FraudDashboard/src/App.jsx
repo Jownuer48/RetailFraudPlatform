@@ -133,6 +133,20 @@ function getWorkerStatusMeta(status) {
   };
 }
 
+function getCameraHealthMeta(status) {
+  if (status === "ONLINE") {
+    return {
+      label: "ONLINE",
+      className: "online",
+    };
+  }
+
+  return {
+    label: "OFFLINE",
+    className: "offline",
+  };
+}
+
 function App() {
   const [transactionId, setTransactionId] = useState("TXN-CCTV-001");
   const [lastSubmittedJobId, setLastSubmittedJobId] = useState("");
@@ -151,6 +165,9 @@ function App() {
   const [queueMessage, setQueueMessage] = useState("");
   const [workerStatuses, setWorkerStatuses] = useState([]);
   const [workerMessage, setWorkerMessage] = useState("");
+
+  const [cameraHealth, setCameraHealth] = useState([]);
+  const [cameraHealthMessage, setCameraHealthMessage] = useState("");
 
   const [reviewFilter, setReviewFilter] = useState("ALL");
   const [riskFilter, setRiskFilter] = useState("ALL");
@@ -205,6 +222,24 @@ function App() {
 
     if (!selectedCameraId && cameraList.length > 0) {
       setSelectedCameraId(cameraList[0].id);
+    }
+  }
+
+  async function fetchCameraHealth() {
+    try {
+      const response = await fetch(`${CAMERAS_API}/health`);
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch camera health");
+      }
+
+      const data = await response.json();
+
+      setCameraHealth(Array.isArray(data) ? data : []);
+      setCameraHealthMessage("");
+    } catch (error) {
+      console.error(error);
+      setCameraHealthMessage("Failed to load camera health");
     }
   }
 
@@ -414,6 +449,7 @@ function App() {
         fetchJobs(),
         fetchQueueSummary(),
         fetchWorkerStatuses(),
+        fetchCameraHealth(),
       ];
 
       if (includeCameras) {
@@ -924,7 +960,7 @@ function App() {
                 Clear Filters
               </button>
             </div>
-            
+
             {/* ------------------------------------- */}
             {/* 1. RabbitMQ Queue Monitor Panel */}
             {/* ------------------------------------- */}
@@ -1091,6 +1127,85 @@ function App() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+            </section>
+
+            <section className="panel camera-health-panel">
+              <div className="section-header">
+                <div>
+                  <p className="eyebrow">CCTV Source</p>
+                  <h2>Camera Health Monitor</h2>
+                </div>
+
+                <button
+                  type="button"
+                  className="queue-button"
+                  onClick={fetchCameraHealth}
+                >
+                  Refresh Cameras
+                </button>
+              </div>
+
+              {cameraHealth.length === 0 ? (
+                <div className="empty-row">No camera health data.</div>
+              ) : (
+                <div className="camera-health-grid">
+                  {cameraHealth.map((camera) => {
+                    const meta = getCameraHealthMeta(camera.status);
+
+                    return (
+                      <div
+                        className={`camera-health-card ${meta.className}`}
+                        key={camera.id}
+                      >
+                        <div className="camera-health-header">
+                          <div>
+                            <span>{camera.storeId}</span>
+                            <strong>{camera.id}</strong>
+                          </div>
+
+                          <span className={`worker-status-badge ${meta.className}`}>
+                            {meta.label}
+                          </span>
+                        </div>
+
+                        <div className="camera-health-body">
+                          <div>
+                            <span>Name</span>
+                            <strong>{camera.cameraName}</strong>
+                          </div>
+
+                          <div>
+                            <span>Source Type</span>
+                            <strong>{camera.sourceType}</strong>
+                          </div>
+
+                          <div>
+                            <span>Source Status</span>
+                            <strong>{camera.sourceStatus}</strong>
+                          </div>
+
+                          <div>
+                            <span>Last Check</span>
+                            <strong>{formatDateTime(camera.lastCheckedAtUtc)}</strong>
+                          </div>
+                        </div>
+
+                        {camera.errorMessage && (
+                          <div className="camera-health-error">
+                            {camera.errorMessage}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {cameraHealthMessage && (
+                <div className="queue-message">
+                  {cameraHealthMessage}
                 </div>
               )}
             </section>
