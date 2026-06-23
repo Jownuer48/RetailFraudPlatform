@@ -1,5 +1,7 @@
 using System.Net.Sockets;
 using FraudAPI.Data;
+using FraudAPI.DTOs;
+using FraudAPI.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -223,5 +225,135 @@ public class CamerasController : ControllerBase
         {
             return (false, ex.Message);
         }
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> CreateCamera([FromBody] CameraUpsertRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Id))
+        {
+            return BadRequest(new { message = "Camera id is required" });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.StoreId))
+        {
+            return BadRequest(new { message = "Store id is required" });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.CameraName))
+        {
+            return BadRequest(new { message = "Camera name is required" });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.SourceType))
+        {
+            return BadRequest(new { message = "Source type is required" });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.SourceUrl))
+        {
+            return BadRequest(new { message = "Source url is required" });
+        }
+
+        var normalizedId = request.Id.Trim();
+
+        var exists = await _context.Cameras.AnyAsync(x => x.Id == normalizedId);
+
+        if (exists)
+        {
+            return Conflict(new
+            {
+                message = $"Camera already exists: {normalizedId}"
+            });
+        }
+
+        var camera = new Camera
+        {
+            Id = normalizedId,
+            StoreId = request.StoreId.Trim(),
+            CameraName = request.CameraName.Trim(),
+            SourceType = request.SourceType.Trim().ToUpperInvariant(),
+            SourceUrl = request.SourceUrl.Trim(),
+            RoiConfigJson = request.RoiConfigJson,
+            IsActive = request.IsActive
+        };
+
+        _context.Cameras.Add(camera);
+
+        await _context.SaveChangesAsync();
+
+        return CreatedAtAction(nameof(GetCameraById), new { id = camera.Id }, camera);
+    }
+
+    [HttpPut("{id}")]
+    public async Task<IActionResult> UpdateCamera(
+        string id,
+        [FromBody] CameraUpsertRequest request)
+    {
+        var camera = await _context.Cameras.FirstOrDefaultAsync(x => x.Id == id);
+
+        if (camera is null)
+        {
+            return NotFound(new
+            {
+                message = $"Camera not found: {id}"
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.StoreId))
+        {
+            return BadRequest(new { message = "Store id is required" });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.CameraName))
+        {
+            return BadRequest(new { message = "Camera name is required" });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.SourceType))
+        {
+            return BadRequest(new { message = "Source type is required" });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.SourceUrl))
+        {
+            return BadRequest(new { message = "Source url is required" });
+        }
+
+        camera.StoreId = request.StoreId.Trim();
+        camera.CameraName = request.CameraName.Trim();
+        camera.SourceType = request.SourceType.Trim().ToUpperInvariant();
+        camera.SourceUrl = request.SourceUrl.Trim();
+        camera.RoiConfigJson = request.RoiConfigJson;
+        camera.IsActive = request.IsActive;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(camera);
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteCamera(string id)
+    {
+        var camera = await _context.Cameras
+            .FirstOrDefaultAsync(x => x.Id == id);
+
+        if (camera is null)
+        {
+            return NotFound(new
+            {
+                message = $"Camera not found: {id}"
+            });
+        }
+
+        _context.Cameras.Remove(camera);
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Camera deleted",
+            id
+        });
     }
 }

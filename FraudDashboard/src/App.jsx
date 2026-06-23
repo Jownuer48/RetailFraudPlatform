@@ -154,6 +154,19 @@ function App() {
   const [cameras, setCameras] = useState([]);
   const [selectedCameraId, setSelectedCameraId] = useState("");
 
+  const [cameraForm, setCameraForm] = useState({
+    id: "",
+    storeId: "STORE-001",
+    cameraName: "",
+    sourceType: "FILE",
+    sourceUrl: "test_normal.mp4",
+    roiConfigJson: "[[150,150],[490,150],[490,480],[150,480]]",
+    isActive: true,
+  });
+
+  const [editingCameraId, setEditingCameraId] = useState("");
+  const [cameraManageMessage, setCameraManageMessage] = useState("");
+
   const [history, setHistory] = useState([]);
   const [jobs, setJobs] = useState([]);
 
@@ -224,6 +237,134 @@ function App() {
       setSelectedCameraId(cameraList[0].id);
     }
   }
+
+  function resetCameraForm() {
+    setEditingCameraId("");
+    setCameraForm({
+      id: "",
+      storeId: "STORE-001",
+      cameraName: "",
+      sourceType: "FILE",
+      sourceUrl: "test_normal.mp4",
+      roiConfigJson: "[[150,150],[490,150],[490,480],[150,480]]",
+      isActive: true,
+    });
+  }
+
+  function startEditCamera(camera) {
+    setEditingCameraId(camera.id);
+
+    setCameraForm({
+      id: camera.id ?? "",
+      storeId: camera.storeId ?? "",
+      cameraName: camera.cameraName ?? "",
+      sourceType: camera.sourceType ?? "FILE",
+      sourceUrl: camera.sourceUrl ?? "",
+      roiConfigJson:
+        camera.roiConfigJson ?? "[[150,150],[490,150],[490,480],[150,480]]",
+      isActive: Boolean(camera.isActive),
+    });
+  }
+
+  async function saveCamera(event) {
+    event.preventDefault();
+
+    try {
+      setCameraManageMessage("");
+
+      const cameraId = editingCameraId || cameraForm.id.trim();
+
+      if (!cameraId) {
+        throw new Error("Camera ID is required");
+      }
+
+      if (!cameraForm.storeId.trim()) {
+        throw new Error("Store ID is required");
+      }
+
+      if (!cameraForm.cameraName.trim()) {
+        throw new Error("Camera name is required");
+      }
+
+      if (!cameraForm.sourceUrl.trim()) {
+        throw new Error("Source URL is required");
+      }
+
+      if (cameraForm.roiConfigJson?.trim()) {
+        JSON.parse(cameraForm.roiConfigJson);
+      }
+
+      const isEditing = Boolean(editingCameraId);
+
+      const payload = {
+        id: cameraId,
+        storeId: cameraForm.storeId.trim(),
+        cameraName: cameraForm.cameraName.trim(),
+        sourceType: cameraForm.sourceType.trim().toUpperCase(),
+        sourceUrl: cameraForm.sourceUrl.trim(),
+        roiConfigJson: cameraForm.roiConfigJson,
+        isActive: cameraForm.isActive,
+      };
+
+      const response = await fetch(
+        isEditing ? `${CAMERAS_API}/${editingCameraId}` : CAMERAS_API,
+        {
+          method: isEditing ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Failed to save camera");
+      }
+
+      setCameraManageMessage(isEditing ? "Camera updated" : "Camera created");
+
+      resetCameraForm();
+
+      await fetchCameras();
+      await fetchCameraHealth();
+    } catch (error) {
+      console.error(error);
+      setCameraManageMessage(error.message ?? "Failed to save camera");
+    }
+  }
+
+  async function deleteCamera(cameraId) {
+    const confirmed = window.confirm(`Delete camera ${cameraId}?`);
+
+    if (!confirmed) return;
+
+    try {
+      setCameraManageMessage("");
+
+      const response = await fetch(`${CAMERAS_API}/${cameraId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Failed to delete camera");
+      }
+
+      setCameraManageMessage(`Camera deleted: ${cameraId}`);
+
+      if (selectedCameraId === cameraId) {
+        setSelectedCameraId("");
+      }
+
+      await fetchCameras();
+      await fetchCameraHealth();
+    } catch (error) {
+      console.error(error);
+      setCameraManageMessage(error.message ?? "Failed to delete camera");
+    }
+  }
+
 
   async function fetchCameraHealth() {
     try {
@@ -1223,6 +1364,178 @@ function App() {
                 <div>
                   <p className="eyebrow">CCTV Source</p>
                   <h2>Camera Health Monitor</h2>
+                  <section className="panel camera-registry-panel">
+                    <div className="section-header">
+                      <div>
+                        <p className="eyebrow">Camera Registry</p>
+                        <h2>Manage CCTV Cameras</h2>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="queue-button"
+                        onClick={resetCameraForm}
+                      >
+                        New Camera
+                      </button>
+                    </div>
+
+                    <form className="camera-form" onSubmit={saveCamera}>
+                      <div className="camera-form-grid">
+                        <label>
+                          Camera ID
+                          <input
+                            value={cameraForm.id}
+                            disabled={Boolean(editingCameraId)}
+                            onChange={(event) =>
+                              setCameraForm((current) => ({
+                                ...current,
+                                id: event.target.value,
+                              }))
+                            }
+                            placeholder="CAM-COUNTER-01"
+                          />
+                        </label>
+
+                        <label>
+                          Store ID
+                          <input
+                            value={cameraForm.storeId}
+                            onChange={(event) =>
+                              setCameraForm((current) => ({
+                                ...current,
+                                storeId: event.target.value,
+                              }))
+                            }
+                            placeholder="STORE-001"
+                          />
+                        </label>
+
+                        <label>
+                          Camera Name
+                          <input
+                            value={cameraForm.cameraName}
+                            onChange={(event) =>
+                              setCameraForm((current) => ({
+                                ...current,
+                                cameraName: event.target.value,
+                              }))
+                            }
+                            placeholder="Counter Camera"
+                          />
+                        </label>
+
+                        <label>
+                          Source Type
+                          <select
+                            value={cameraForm.sourceType}
+                            onChange={(event) =>
+                              setCameraForm((current) => ({
+                                ...current,
+                                sourceType: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="FILE">FILE</option>
+                            <option value="RTSP">RTSP</option>
+                          </select>
+                        </label>
+
+                        <label className="wide-field">
+                          Source URL
+                          <input
+                            value={cameraForm.sourceUrl}
+                            onChange={(event) =>
+                              setCameraForm((current) => ({
+                                ...current,
+                                sourceUrl: event.target.value,
+                              }))
+                            }
+                            placeholder="test_normal.mp4 หรือ rtsp://..."
+                          />
+                        </label>
+
+                        <label className="wide-field">
+                          ROI Config JSON
+                          <textarea
+                            value={cameraForm.roiConfigJson}
+                            onChange={(event) =>
+                              setCameraForm((current) => ({
+                                ...current,
+                                roiConfigJson: event.target.value,
+                              }))
+                            }
+                            rows={3}
+                          />
+                        </label>
+
+                        <label className="camera-checkbox">
+                          <input
+                            type="checkbox"
+                            checked={cameraForm.isActive}
+                            onChange={(event) =>
+                              setCameraForm((current) => ({
+                                ...current,
+                                isActive: event.target.checked,
+                              }))
+                            }
+                          />
+                          Active Camera
+                        </label>
+                      </div>
+
+                      <div className="button-row">
+                        <button type="submit">
+                          {editingCameraId ? "Update Camera" : "Create Camera"}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={resetCameraForm}
+                        >
+                          Reset
+                        </button>
+                      </div>
+                    </form>
+
+                    {cameraManageMessage && (
+                      <div className="queue-message">
+                        {cameraManageMessage}
+                      </div>
+                    )}
+
+                    <div className="camera-registry-list">
+                      {cameras.map((camera) => (
+                        <div className="camera-registry-item" key={camera.id}>
+                          <div>
+                            <strong>{camera.id}</strong>
+                            <span>
+                              {camera.cameraName} / {camera.storeId} / {camera.sourceType}
+                            </span>
+                          </div>
+
+                          <div className="queue-actions">
+                            <button
+                              type="button"
+                              className="queue-button"
+                              onClick={() => startEditCamera(camera)}
+                            >
+                              Edit
+                            </button>
+
+                            <button
+                              type="button"
+                              className="queue-button danger"
+                              onClick={() => deleteCamera(camera.id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
                 </div>
 
                 <button
