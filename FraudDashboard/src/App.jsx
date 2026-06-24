@@ -6,6 +6,7 @@ const API_ROOT = `${BACKEND_ROOT}/api`;
 const ANALYSIS_API = `${API_ROOT}/Analysis`;
 const CAMERAS_API = `${API_ROOT}/Cameras`;
 const WORKERS_API = `${API_ROOT}/Workers`;
+const STORES_API = `${API_ROOT}/Stores`;
 
 const STATUS_META = {
   QUEUED: { label: "Queued", className: "status queued" },
@@ -103,6 +104,10 @@ function App() {
   const [cameras, setCameras] = useState([]);
   const [selectedCameraId, setSelectedCameraId] = useState("");
 
+  const [stores, setStores] = useState([]);
+  const [selectedStoreId, setSelectedStoreId] = useState("ALL");
+  const [storeMessage, setStoreMessage] = useState("");
+
   const [cameraForm, setCameraForm] = useState({
     id: "CAM-COUNTER-01",
     storeId: "STORE-001",
@@ -141,9 +146,36 @@ function App() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
+  const filteredCameras = useMemo(() => {
+    if (selectedStoreId === "ALL") return cameras;
+
+    return cameras.filter((camera) => camera.storeId === selectedStoreId);
+  }, [cameras, selectedStoreId]);
+
+  const filteredCameraHealth = useMemo(() => {
+    if (selectedStoreId === "ALL") return cameraHealth;
+
+    return cameraHealth.filter((camera) => camera.storeId === selectedStoreId);
+  }, [cameraHealth, selectedStoreId]);
+
+  const filteredJobsByStore = useMemo(() => {
+    if (selectedStoreId === "ALL") return jobs;
+
+    return jobs.filter((job) => {
+      const camera = cameras.find((item) => item.id === job.cameraId);
+      return camera?.storeId === selectedStoreId;
+    });
+  }, [jobs, cameras, selectedStoreId]);
+
+  const selectedStore = useMemo(() => {
+    if (selectedStoreId === "ALL") return null;
+
+    return stores.find((store) => store.id === selectedStoreId) ?? null;
+  }, [stores, selectedStoreId]);
+
   const selectedCamera = useMemo(() => {
-    return cameras.find((camera) => camera.id === selectedCameraId) ?? null;
-  }, [cameras, selectedCameraId]);
+    return filteredCameras.find((camera) => camera.id === selectedCameraId) ?? null;
+  }, [filteredCameras, selectedCameraId]);
 
   const selectedCameraHealth = useMemo(() => {
     return cameraHealth.find((camera) => camera.id === selectedCameraId) ?? null;
@@ -161,11 +193,18 @@ function App() {
   }, [jobs, lastSubmittedJobId]);
 
   const activeJobCount = useMemo(() => {
-    return jobs.filter((job) => job.status === "QUEUED" || job.status === "PROCESSING").length;
-  }, [jobs]);
+    return filteredJobsByStore.filter(
+      (job) => job.status === "QUEUED" || job.status === "PROCESSING"
+    ).length;
+  }, [filteredJobsByStore]);
 
-  const completedJobCount = useMemo(() => jobs.filter((job) => job.status === "COMPLETED").length, [jobs]);
-  const failedJobCount = useMemo(() => jobs.filter((job) => job.status === "FAILED").length, [jobs]);
+  const completedJobCount = useMemo(() => {
+    return filteredJobsByStore.filter((job) => job.status === "COMPLETED").length;
+  }, [filteredJobsByStore]);
+
+  const failedJobCount = useMemo(() => {
+    return filteredJobsByStore.filter((job) => job.status === "FAILED").length;
+  }, [filteredJobsByStore]);
 
   const onlineWorkers = workerStatuses.filter((worker) => worker.status === "ONLINE");
   const primaryWorker = onlineWorkers[0] || workerStatuses[0] || null;
@@ -228,12 +267,22 @@ function App() {
       const reviewStatus = record.reviewStatus || "NEEDS_REVIEW";
       const riskLevel = record.riskLevel || "UNKNOWN";
 
-      const matchReview = reviewFilter === "ALL" || reviewStatus === reviewFilter;
-      const matchRisk = riskFilter === "ALL" || riskLevel === riskFilter;
+      const matchReview =
+        reviewFilter === "ALL" || reviewStatus === reviewFilter;
 
-      return matchReview && matchRisk;
+      const matchRisk =
+        riskFilter === "ALL" || riskLevel === riskFilter;
+
+      const matchStore =
+        selectedStoreId === "ALL" || record.cameraId
+          ? selectedStoreId === "ALL" ||
+          cameras.find((camera) => camera.id === record.cameraId)?.storeId ===
+          selectedStoreId
+          : selectedStoreId === "ALL";
+
+      return matchReview && matchRisk && matchStore;
     });
-  }, [history, reviewFilter, riskFilter]);
+  }, [history, reviewFilter, riskFilter, selectedStoreId, cameras]);
 
   async function fetchCameras() {
     const response = await fetch(CAMERAS_API);
@@ -247,6 +296,24 @@ function App() {
 
     if (!selectedCameraId && cameraList.length > 0) {
       setSelectedCameraId(cameraList[0].id);
+    }
+  }
+
+  async function fetchStores() {
+    try {
+      const response = await fetch(STORES_API);
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch stores");
+      }
+
+      const data = await response.json();
+
+      setStores(Array.isArray(data) ? data : []);
+      setStoreMessage("");
+    } catch (error) {
+      console.error(error);
+      setStoreMessage("Failed to load stores");
     }
   }
 
@@ -320,6 +387,7 @@ function App() {
         fetchQueueSummary(),
         fetchWorkerStatuses(),
         fetchCameraHealth(),
+        fetchStores(),
       ];
 
       if (includeCameras) tasks.push(fetchCameras());
@@ -572,7 +640,7 @@ function App() {
       <section className="stats-grid">
         <div className="stat-card">
           <span>Total Jobs</span>
-          <strong>{jobs.length}</strong>
+          <strong>{filteredJobsByStore.length}</strong>
         </div>
         <div className="stat-card">
           <span>Active</span>
@@ -677,10 +745,10 @@ function App() {
             <label>
               CCTV Camera
               <select value={selectedCameraId} onChange={(event) => setSelectedCameraId(event.target.value)}>
-                {cameras.length === 0 ? (
+                {filteredCameras.length === 0 ? (
                   <option value="">No cameras found</option>
                 ) : (
-                  cameras.map((camera) => (
+                  filteredCameras.map((camera) => (
                     <option key={camera.id} value={camera.id}>
                       {camera.id} - {camera.cameraName} ({camera.storeId})
                     </option>
@@ -823,12 +891,12 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {jobs.length === 0 ? (
+              {filteredJobsByStore.length === 0 ? (
                 <tr>
                   <td colSpan="8" className="empty-row">No jobs found</td>
                 </tr>
               ) : (
-                jobs.map((job) => {
+                filteredJobsByStore.map((job) => {
                   const statusMeta = getStatusMeta(job.status);
                   return (
                     <tr key={job.id}>
@@ -1071,11 +1139,11 @@ function App() {
           <button type="button" className="queue-button" onClick={fetchCameraHealth}>Refresh Cameras</button>
         </div>
 
-        {cameraHealth.length === 0 ? (
+        {filteredCameraHealth.length === 0 ? (
           <div className="empty-row">No camera health data.</div>
         ) : (
           <div className="camera-health-grid">
-            {cameraHealth.map((camera) => {
+            {filteredCameraHealth.map((camera) => {
               const meta = getCameraHealthMeta(camera.status);
               return (
                 <div className={`camera-health-card ${meta.className}`} key={camera.id}>
@@ -1183,10 +1251,10 @@ function App() {
           {cameraManageMessage && <div className="queue-message">{cameraManageMessage}</div>}
 
           <div className="camera-registry-list">
-            {cameras.length === 0 ? (
+            {filteredCameras.length === 0 ? (
               <div className="empty-row">No cameras found</div>
             ) : (
-              cameras.map((camera) => (
+              filteredCameras.map((camera) => (
                 <div className="camera-registry-item" key={camera.id}>
                   <div>
                     <strong>{camera.id}</strong>
@@ -1304,6 +1372,53 @@ function App() {
             <strong>{hasOnlineWorker ? "Online" : "Degraded"}</strong>
             <span>{canStartAnalysis ? "Ready to analyze" : startBlockedReason || "Monitoring"}</span>
           </div>
+        </section>
+
+        <section className="panel store-filter-panel">
+          <div className="section-header">
+            <div>
+              <p className="eyebrow">Branch Scope</p>
+              <h2>Store Filter</h2>
+            </div>
+
+            <button
+              type="button"
+              className="queue-button"
+              onClick={fetchStores}
+            >
+              Refresh Stores
+            </button>
+          </div>
+
+          <div className="store-filter-row">
+            <label>
+              Store
+              <select
+                value={selectedStoreId}
+                onChange={(event) => {
+                  setSelectedStoreId(event.target.value);
+                  setSelectedCameraId("");
+                }}
+              >
+                <option value="ALL">All Stores</option>
+
+                {stores.map((store) => (
+                  <option key={store.id} value={store.id}>
+                    {store.id} - {store.storeName}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="store-filter-summary">
+              <span>Current Scope</span>
+              <strong>
+                {selectedStore ? `${selectedStore.id} / ${selectedStore.storeName}` : "All Stores"}
+              </strong>
+            </div>
+          </div>
+
+          {storeMessage && <div className="queue-message">{storeMessage}</div>}
         </section>
 
         {renderActivePage()}

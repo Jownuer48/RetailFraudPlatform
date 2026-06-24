@@ -1664,3 +1664,60 @@ tr:hover td {
     grid-template-columns: 1fr;
   }
 }
+
+.store-filter-panel {
+  margin-bottom: 18px;
+}
+
+.store-filter-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.store-filter-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.store-filter-row select {
+  padding: 10px 13px;
+  background: var(--bg-inset);
+  border: 0.5px solid var(--border-mid);
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-family: var(--font);
+}
+
+.store-filter-summary {
+  padding: 10px 13px;
+  background: var(--bg-inset);
+  border: 0.5px solid var(--border-dim);
+  border-radius: var(--r-sm);
+}
+
+.store-filter-summary span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-bottom: 3px;
+}
+
+.store-filter-summary strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+@media (max-width: 680px) {
+  .store-filter-row {
+    grid-template-columns: 1fr;
+  }
+}
