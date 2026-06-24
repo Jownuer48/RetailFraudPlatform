@@ -18,13 +18,19 @@ public class AppDbContext : DbContext
 
     public DbSet<WorkerStatus> WorkerStatuses => Set<WorkerStatus>();
 
+    public DbSet<Store> Stores => Set<Store>();
+
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
 
+
         ConfigureAnalysisJob(modelBuilder);
         ConfigureCamera(modelBuilder);
         ConfigureWorkerStatus(modelBuilder);
+        ConfigureStore(modelBuilder);
+
     }
 
     private static void ConfigureAnalysisJob(ModelBuilder modelBuilder)
@@ -145,6 +151,30 @@ public class AppDbContext : DbContext
             entity.HasIndex(x => x.Status);
             entity.HasIndex(x => x.LastSeenAtUtc);
             entity.HasIndex(x => x.CurrentJobId);
+        });
+    }
+
+    private static void ConfigureStore(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Store>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+
+            entity.Property(x => x.Id)
+                .HasMaxLength(100);
+
+            entity.Property(x => x.StoreName)
+                .HasMaxLength(200)
+                .IsRequired();
+
+            entity.Property(x => x.Region)
+                .HasMaxLength(100);
+
+            entity.Property(x => x.Address)
+                .HasMaxLength(300);
+
+            entity.HasIndex(x => x.Region);
+            entity.HasIndex(x => x.IsActive);
         });
     }
 }

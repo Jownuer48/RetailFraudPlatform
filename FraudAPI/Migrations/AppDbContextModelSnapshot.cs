@@ -245,6 +245,40 @@ namespace FraudAPI.Migrations
                     b.ToTable("FraudRecords");
                 });
 
+            modelBuilder.Entity("FraudAPI.Models.Store", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("Address")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Region")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("StoreName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsActive");
+
+                    b.HasIndex("Region");
+
+                    b.ToTable("Stores");
+                });
+
             modelBuilder.Entity("FraudAPI.Models.WorkerStatus", b =>
                 {
                     b.Property<string>("WorkerId")
